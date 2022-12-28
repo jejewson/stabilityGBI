@@ -1,0 +1,526 @@
+---
+title: "Stability: Binary Classification"
+author: "Jack Jewson"
+date: "Dec 2022"
+output: html_document
+---
+
+This notebook contains the code to reproduce the experiments of Section 6.3  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
+
+## Preamble {.tabset}
+
+### Working directory
+
+Setting the Working Directory as the folder where these files are stored
+
+```{r setwd, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+my.dir <- "/home/usuario/Documents/Barcelona_Yr1/StabilityGeneralBayes"
+
+```
+
+### Packages
+
+Loading required packages
+
+```{r pcks, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+library(matrixStats)
+library(utils)
+
+library(HiDimDA)
+library(glmnet)
+
+```
+
+### stan files
+
+Compiling the required stan files
+
+```{r stan, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+setwd(my.dir)
+
+#http://discourse.mc-stan.org/t/stan-recompile-to-avoid-r-from-crashing/2631
+## KLD-Bayes
+### logistic
+KLBayes_logisticRegression_stan <- stan_model(file = "KLBayes_logisticRegression_ML.stan")
+KLBayes_logisticRegression_wbeta_stan <- stan_model(file = "KLBayes_logisticRegression_ML_wbeta.stan")
+
+### t-logistic
+KLBayes_t_logisticRegression_stan <- stan_model(file = "KLBayes_t_logisticRegression_ML.stan")
+KLBayes_t_logisticRegression_wbeta_stan <- stan_model(file = "KLBayes_t_logisticRegression_ML_wbeta.stan")
+
+### probit
+KLBayes_probitRegression_stan <- stan_model(file = "KLBayes_probitRegression_ML.stan")
+KLBayes_probitRegression_wbeta_stan <- stan_model(file = "KLBayes_probitRegression_ML_wbeta.stan")
+
+### mislabelled
+KLBayes_logisticRegression_mislabelled_stan <- stan_model(file = "KLBayes_logisticRegression_mislabelled_ML.stan")
+KLBayes_logisticRegression_mislabelled_wbeta_stan <- stan_model(file = "KLBayes_logisticRegression_mislabelled_ML_wbeta.stan")
+
+## betaD-Bayes
+### logistic
+betaBayes_logisticRegression_stan <- stan_model(file = "betaBayes_logisticRegression_ML.stan")
+betaBayes_logisticRegression_wbeta_stan <- stan_model(file = "betaBayes_logisticRegression_ML_wbeta.stan")
+
+### t-logistic
+betaBayes_t_logisticRegression_stan <- stan_model(file = "betaBayes_t_logisticRegression_ML.stan")
+betaBayes_t_logisticRegression_wbeta_stan <- stan_model(file = "betaBayes_t_logisticRegression_ML_wbeta.stan")
+
+### probit
+betaBayes_probitRegression_stan <- stan_model(file = "betaBayes_probitRegression_ML.stan")
+betaBayes_probitRegression_wbeta_stan <- stan_model(file = "betaBayes_probitRegression_ML_wbeta.stan")
+
+### mislabelled
+betaBayes_logisticRegression_mislabelled_stan <- stan_model(file = "betaBayes_logisticRegression_mislabelled_ML.stan")
+betaBayes_logisticRegression_mislabelled_wbeta_stan <- stan_model(file = "betaBayes_logisticRegression_mislabelled_ML_wbeta.stan")
+
+
+```
+
+### MCMC settings
+
+```{r MCMC_settings, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+warmup <- 1000
+iterations <- warmup + 1000
+
+```
+
+
+## Binary Regression Models {.tabset}
+
+### t-logistic Regression functions
+
+
+```{r t_logisticRegression_functions, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+exp_t <- function(x, t){
+ if(t<= 0){return(NA)}
+ if(t == 1){return(exp(x))}
+ else{
+  ret <- (1+(1-t)*x)^(1/(1-t))
+  ret[ret<= 0] <- 0
+  return(ret)
+}
+}
+
+log_t <- function(x, t){
+ if(t<= 0){return(NA)}
+ if(t == 1){return(log(x))}
+ else{
+  return((x^(1-t)-1)/(1-t))
+ }
+}
+
+G_t <- function(a_hat, t, tol = 1e-10){
+ neg_a_hat <- a_hat<0
+ a_hat[neg_a_hat] <- -a_hat[neg_a_hat]
+ a_tilde <- a_hat
+ conv <- Inf
+ while(max(conv)>tol){## SO if we give this a vector it will iterate all of these until they have all converged, so will do more iterations than we need to but hopefully the parralel nature speeds things up.
+  Z_a_tilde <- 1+exp_t(-a_tilde, t)
+  a_tilde_new <- Z_a_tilde^(1-t)*a_hat
+  conv <- abs(a_tilde_new-a_tilde)
+  a_tilde <- a_tilde_new
+ }
+ return(-log_t(1/Z_a_tilde, t)+a_hat/2)
+}
+ 
+
+```
+
+### Pmfs
+
+Functions to calculate the binary probabilties for each model
+
+```{r logisticRegression_vs_fns, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+#, dev = tikzDevice::tikz()}
+
+p_logistic <- function(Xbeta){
+ return((exp(1/2*Xbeta))/(exp(1/2*Xbeta)+exp(-1/2*Xbeta)))
+}
+
+p_probit <- function(Xbeta){
+ return(pnorm(Xbeta, 0, 1))
+}
+
+p_logistic_mislabelled <- function(Xbeta, eta_0, eta_1){
+ return((1-eta_1)*(exp(1/2*Xbeta))/(exp(1/2*Xbeta)+exp(-1/2*Xbeta)) + eta_0*(1-(exp(1/2*Xbeta))/(exp(1/2*Xbeta)+exp(-1/2*Xbeta))))
+}
+
+p_t_logistic <- function(Xbeta, t){
+ return(exp_t((1/2*Xbeta-G_t(Xbeta, t)), t))
+}
+
+logistic_predictive <- function(beta_samp, X){
+ ## The P(Y = 1|X) averaged over beta_samp
+ n_obs <- nrow(X)
+ n_samp <- nrow(beta_samp)
+ 
+ predictive_p <- matrix(NA, nrow = n_samp, ncol = n_obs)
+ for(i in 1:n_samp){
+  predictive_p[i, ] <- p_logistic(X%*%beta_samp[i, ])
+ }
+ return(colMeans(predictive_p))
+}
+
+t_logistic_predictive <- function(beta_samp, X, t){
+ ## The P(Y = 1|X) averaged over beta_samp
+ n_obs <- nrow(X)
+ n_samp <- nrow(beta_samp)
+ 
+ predictive_p <- matrix(NA, nrow = n_samp, ncol = n_obs)
+ for(i in 1:n_samp){
+  predictive_p[i, ] <- p_t_logistic(X%*%beta_samp[i, ], t)
+ }
+ return(colMeans(predictive_p))
+}
+
+probit_predictive <- function(beta_samp, X){
+ ## The P(Y = 1|X) averaged over beta_samp
+ n_obs <- nrow(X)
+ n_samp <- nrow(beta_samp)
+ 
+ predictive_p <- matrix(NA, nrow = n_samp, ncol = n_obs)
+ for(i in 1:n_samp){
+  predictive_p[i, ] <- p_probit(X%*%beta_samp[i, ])
+ }
+ return(colMeans(predictive_p))
+}
+
+logistic_mislabelled_predictive <- function(beta_samp, X, eta_samp){
+ ## The P(Y = 1|X) averaged over beta_samp
+ n_obs <- nrow(X)
+ n_samp <- nrow(beta_samp)
+ 
+ predictive_p <- matrix(NA, nrow = n_samp, ncol = n_obs)
+ for(i in 1:n_samp){
+  predictive_p[i, ] <- p_logistic_mislabelled(X%*%beta_samp[i, ], eta_samp[i, 1], eta_samp[i, 2])
+ }
+ return(colMeans(predictive_p))
+}
+
+
+```
+
+### TVD neighbourhoods
+
+Fixing the TVD neighbourhoods between the each of the alternative nodels and the logistic regression model
+
+```{r logisticRegression_vs_TVDs, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+
+Xbeta <- seq(-5, 5, length.out = 1000)
+w_probit_beta_hat <- optimise(f = function(w){max(abs(p_logistic(Xbeta) - p_probit(w*Xbeta)))}, lower = 0, upper = 10)
+
+w_probit_beta_hat$minimum
+w_probit_beta_hat$objective
+
+w_t_beta_hat <- optimise(f = function(w){max(abs(p_logistic(Xbeta) - p_t_logistic(w*Xbeta, t = 1.25)))}, lower = 0, upper = 10)
+
+w_t_beta_hat$minimum
+w_t_beta_hat$objective
+
+
+```
+
+Plotting the pmf for each model and the TVD between each alternative model and the logistic regression model
+
+```{r logisticRegression_vs_TVDs_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, fig.height = 3, fig.width = 5, dev = tikzDevice::tikz()}
+
+par(mar = c(3.1, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+Xbeta <- seq(-5, 5, length.out = 1000)
+
+plot(Xbeta, p_logistic(Xbeta), type = "l", lwd = 3, col = "red", xlab = "$X\\theta$", ylab = "$P(Y = 1 | X\\theta)$")
+points(Xbeta, p_probit(w_probit_beta_hat$minimum*Xbeta), col = "blue", lwd = 3, type = "l")
+points(Xbeta, p_t_logistic(w_t_beta_hat$minimum*Xbeta, t = 1.25), col = "green", lwd = 3, type = "l")
+points(Xbeta, p_logistic_mislabelled(Xbeta, eta_0 = 0.05, eta_1 = 0.05), col = "orange", lwd = 3, type = "l")
+legend("topleft", c("logistic", "$t$-logistic", "probit", "mislabelled"), col = c("red", "green", "blue", "orange"), lwd = rep(3, 4), bty = "n", cex = 1.25)
+
+plot(Xbeta, abs(p_logistic(Xbeta) - p_probit(w_probit_beta_hat$minimum*Xbeta)), col = "blue", lwd = 3, type = "l", xlab = "$X\\theta$", ylab = "TVD", ylim = c(0, 0.075))
+points(Xbeta, abs(p_logistic(Xbeta) - p_t_logistic(w_t_beta_hat$minimum*Xbeta, t = 1.25)), col = "green", lwd = 3, type = "l")
+points(Xbeta, abs(p_logistic(Xbeta) - p_logistic_mislabelled(Xbeta, eta_0 = 0.05, eta_1 = 0.05)), col = "orange", lwd = 3, type = "l")
+legend("topleft", c("$t$-logistic", "probit", "mislabelled"), col = c("green", "blue", "orange"), lwd = rep(3, 4), bty = "n", cex = 1.25)
+
+```
+
+
+## Colon Cancer dataset {.tabset}
+
+https://nlp.stanford.edu/pubs/tibs_manning_acl2014.pdf
+
+http://genomics-pubs.princeton.edu/oncology/affydata/
+
+We run some frequentist LASSO first to trim them down 
+
+### Data Load
+
+
+```{r Colon_cancer_data_load2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+data(AlonDS)
+
+AlonDS$grouping <- (as.numeric(factor(AlonDS$grouping)) - 1)
+
+AlonDS_mat <- data.matrix(AlonDS)
+
+hist(AlonDS_mat[, 2])
+
+## https://rdrr.io/cran/ShrinkCovMat/man/colon.html - do log_10
+AlonDS_mat_log10 <- cbind(AlonDS_mat[, 1], log(AlonDS_mat[, -1], base = 10))
+hist(AlonDS_mat_log10[, 5])
+
+table(AlonDS_mat_log10[, 1])
+
+
+n_cc <- nrow(AlonDS_mat_log10)
+
+
+colon_cancer_X <- cbind(rep(1, n_cc), AlonDS_mat_log10[, -1])
+p_cc <- ncol(colon_cancer_X)
+colon_cancer_Y <- 2*AlonDS_mat_log10[, 1] - 1
+
+## Standardisation 
+colon_cancer_X_std <- (colon_cancer_X - matrix(colMeans(colon_cancer_X), nrow = n_cc, ncol = p_cc, byrow = TRUE))/matrix(sqrt(colVars(colon_cancer_X)), nrow = n_cc, ncol = p_cc, byrow = TRUE)
+colon_cancer_X_std[,1] <- colon_cancer_X[,1]
+
+colMeans(colon_cancer_X_std)
+colVars(colon_cancer_X_std)
+
+```
+
+### Preprocessing
+
+```{r Colon_cancer_preprocessing2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+set.seed(123)
+#cv.lasso <- cv.glmnet(colon_cancer_X[, -1], y = (colon_cancer_Y + 1)/2, alpha = 1, family = "binomial")
+cv.lasso <- cv.glmnet(colon_cancer_X_std[, -1], y = (colon_cancer_Y + 1)/2, alpha = 1, family = "binomial")
+plot(cv.lasso)
+
+cv.lasso$lambda.min
+cv.lasso$lambda.1se
+
+coeffs.min <- coef(cv.lasso, cv.lasso$lambda.min)
+coeffs.1se <- coef(cv.lasso, cv.lasso$lambda.1se)
+
+
+ind <- coeffs.min@i
+coeffs.1se@i
+
+ind <- c(0, 249, 377, 493, 625, 1325, 1473, 1582, 1971, 1772)
+
+n_cc <- nrow(AlonDS_mat_log10)
+
+colon_cancer_X <- cbind(rep(1, n_cc), AlonDS_mat_log10[, ind[-1] + 1])
+colon_cancer_X
+p_cc <- ncol(colon_cancer_X)
+colon_cancer_Y <- 2*AlonDS_mat_log10[, 1] - 1
+
+colMeans(colon_cancer_X)
+colVars(colon_cancer_X)
+
+```
+
+### Prior
+
+```{r Colon_cancer_prior2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+mu_0 <- 0
+v_0 <- 3
+
+```
+
+### KLD-Bayes - Logistic Regression
+
+```{r colon_cancer_KLD_logistic, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayes_logisticRegression_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1)
+KLBayes_logisticRegression <- sampling(object = KLBayes_logisticRegression_stan, data = KLBayes_logisticRegression_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+KLBayes_logisticRegression_params <- extract(KLBayes_logisticRegression)
+
+hat_beta_KLD_logistic_CC <- colMeans(KLBayes_logisticRegression_params$beta)
+p_KLD_logistic_CC <- logistic_predictive(KLBayes_logisticRegression_params$beta, colon_cancer_X_std)
+
+
+```
+
+### KLD-Bayes - t-Logistic Regression
+
+```{r colon_cancer_KLD_t_logistic_wbeta2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayes_t_logisticRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, t = 1.25, w_beta = w_t_beta_hat$minimum)
+KLBayes_t_logisticRegression_wbeta <- sampling(object = KLBayes_t_logisticRegression_wbeta_stan, data = KLBayes_t_logisticRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+KLBayes_t_logisticRegression_wbeta_params <- extract(KLBayes_t_logisticRegression_wbeta)
+
+hat_beta_KLD_t_logistic_wbeta_CC <- colMeans(KLBayes_t_logisticRegression_wbeta_params$beta)
+p_KLD_t_logistic_wbeta_CC <- t_logistic_predictive(w_t_beta_hat$minimum*KLBayes_t_logisticRegression_wbeta_params$beta, colon_cancer_X_std, t = 1.25)
+
+
+```
+
+### KLD-Bayes - Probit Regression
+
+```{r colon_cancer_KLD_probit_wbeta, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayes_probitRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, w_beta = w_probit_beta_hat$minimum)
+KLBayes_probitRegression_wbeta <- sampling(object = KLBayes_probitRegression_wbeta_stan, data = KLBayes_probitRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+ KLBayes_probitRegression_wbeta_params <- extract(KLBayes_probitRegression_wbeta)
+
+hat_beta_KLD_probit_wbeta_CC <- colMeans(KLBayes_probitRegression_wbeta_params$beta)
+p_KLD_probit_wbeta_CC <- probit_predictive(w_probit_beta_hat$minimum*KLBayes_probitRegression_wbeta_params$beta, colon_cancer_X_std)
+
+
+```
+
+### KLD-Bayes - Mislabelled Logistic Regression
+
+
+```{r colon_cancer_KLD_logistic_mislabelled, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayes_logisticRegression_mislabelled_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, eta_bound = c(0, 0.05), w = 1)
+KLBayes_logisticRegression_mislabelled <- sampling(object = KLBayes_logisticRegression_mislabelled_stan, data = KLBayes_logisticRegression_mislabelled_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+KLBayes_logisticRegression_mislabelled_params <- extract(KLBayes_logisticRegression_mislabelled)
+
+hat_beta_KLD_logistic_mislabelled_CC <- colMeans(KLBayes_logisticRegression_mislabelled_params$beta)
+hat_eta_KLD_logistic_mislabelled_CC <- colMeans(KLBayes_logisticRegression_mislabelled_params$eta)
+p_KLD_logistic_mislabelled_CC <- logistic_mislabelled_predictive(KLBayes_logisticRegression_mislabelled_params$beta, colon_cancer_X_std, KLBayes_logisticRegression_mislabelled_params$eta)
+
+
+
+```
+
+
+### betaD-Bayes - Logistic Regression
+
+```{r colon_cancer_betaD_logistic, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+betaBayes_logisticRegression_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = 0.5)
+betaBayes_logisticRegression <- sampling(object = betaBayes_logisticRegression_stan, data = betaBayes_logisticRegression_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+betaBayes_logisticRegression_params <- extract(betaBayes_logisticRegression)
+
+hat_beta_betaD_logistic_CC <- colMeans(betaBayes_logisticRegression_params$beta)
+p_betaD_logistic_CC <- logistic_predictive(betaBayes_logisticRegression_params$beta, colon_cancer_X_std)
+
+
+```
+
+### betaD-Bayes - t-Logistic Regression
+
+```{r colon_cancer_betaD_t_logistic_wbeta2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+betaBayes_t_logisticRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, t = 1.25,  beta_p = 0.5, w_beta = w_t_beta_hat$minimum)
+betaBayes_t_logisticRegression_wbeta <- sampling(object = betaBayes_t_logisticRegression_wbeta_stan, data = betaBayes_t_logisticRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1, refresh = 0)
+betaBayes_t_logisticRegression_wbeta_params <- extract(betaBayes_t_logisticRegression_wbeta)
+
+hat_beta_betaD_t_logistic_wbeta_CC <- colMeans(betaBayes_t_logisticRegression_wbeta_params$beta)
+p_betaD_t_logistic_wbeta_CC <- t_logistic_predictive(w_t_beta_hat$minimum*betaBayes_t_logisticRegression_wbeta_params$beta, colon_cancer_X_std, t = 1.25)
+
+
+```
+
+### betaD-Bayes - Probit Regression
+
+```{r colon_cancer_betaD_probit_wbeta, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+betaBayes_probitRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = 0.5, w_beta = w_probit_beta_hat$minimum)
+betaBayes_probitRegression_wbeta <- sampling(object = betaBayes_probitRegression_wbeta_stan, data = betaBayes_probitRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1, refresh = 0)
+ betaBayes_probitRegression_wbeta_params <- extract(betaBayes_probitRegression_wbeta)
+
+hat_beta_betaD_probit_wbeta_CC <- colMeans(betaBayes_probitRegression_wbeta_params$beta)
+p_betaD_probit_wbeta_CC <- probit_predictive(w_probit_beta_hat$minimum*betaBayes_probitRegression_wbeta_params$beta, colon_cancer_X_std)
+
+```
+
+### betaD-Bayes - Mislabelled Logistic Regression
+
+
+```{r colon_cancer_betaD_logistic_mislabelled, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+betaBayes_logisticRegression_mislabelled_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, eta_bound = c(0, 0.05), w = 1, beta_p = 0.5)
+betaBayes_logisticRegression_mislabelled <- sampling(object = betaBayes_logisticRegression_mislabelled_stan, data = betaBayes_logisticRegression_mislabelled_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
+betaBayes_logisticRegression_mislabelled_params <- extract(betaBayes_logisticRegression_mislabelled)
+
+hat_beta_betaD_logistic_mislabelled_CC <- colMeans(betaBayes_logisticRegression_mislabelled_params$beta)
+hat_eta_betaD_logistic_mislabelled_CC <- colMeans(betaBayes_logisticRegression_mislabelled_params$eta)
+p_betaD_logistic_mislabelled_CC <- logistic_mislabelled_predictive(betaBayes_logisticRegression_mislabelled_params$beta, colon_cancer_X_std, betaBayes_logisticRegression_mislabelled_params$eta)
+
+
+
+```
+
+### KLD vs betaD stability 
+
+#### Parameters
+
+```{r colon_cancer_KLD_betaD_stabilityl_logit_params_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3.5, fig.width = 3.3, dev = tikzDevice::tikz()}
+
+par(mar = c(3.1, 3.3, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+## Parameter Estimates
+
+
+## logistic vs probit
+abs(hat_beta_KLD_logistic_CC -w_probit_beta_hat$minimum*hat_beta_KLD_probit_wbeta_CC)
+abs(hat_beta_betaD_logistic_CC - w_probit_beta_hat$minimum*hat_beta_betaD_probit_wbeta_CC)
+
+plot(1:p_cc, abs(hat_beta_KLD_logistic_CC -w_probit_beta_hat$minimum*hat_beta_KLD_probit_wbeta_CC), type = "b", lwd = 3, col = "red", xlab = "$\\theta$-index", ylab = "$|\\hat{\\theta}_{LR} - \\hat{\\theta}_{PR}|$", main = "logistic vs probit", ylim = c(0, 1.2))
+points(1:p_cc, abs(hat_beta_betaD_logistic_CC - w_probit_beta_hat$minimum*hat_beta_betaD_probit_wbeta_CC), type = "b", lwd = 3, col = "blue")
+legend("topleft", c("KLD", "$\\beta$D"), col = c("red", "blue"), lwd = 3, bty = "n")
+
+## logistic vs t-logistic
+abs(hat_beta_KLD_logistic_CC - w_t_beta_hat$minimum*hat_beta_KLD_t_logistic_wbeta_CC)
+abs(hat_beta_betaD_logistic_CC - w_t_beta_hat$minimum*hat_beta_betaD_t_logistic_wbeta_CC)
+
+plot(1:p_cc, abs(hat_beta_KLD_logistic_CC -w_t_beta_hat$minimum*hat_beta_KLD_t_logistic_wbeta_CC), type = "b", lwd = 3, col = "red", xlab = "$\\theta$-index", ylab = "$|\\hat{\\theta}_{LR} - \\hat{\\theta}_{tLR}|$", main = "logistic vs $t$-logistic", ylim = c(0, 0.8))
+points(1:p_cc, abs(hat_beta_betaD_logistic_CC - w_t_beta_hat$minimum*hat_beta_betaD_t_logistic_wbeta_CC), type = "b", lwd = 3, col = "blue")
+
+## logistic vs logistic-mislabelled
+abs(hat_beta_KLD_logistic_CC - hat_beta_KLD_logistic_mislabelled_CC)
+abs(hat_beta_betaD_logistic_CC - hat_beta_betaD_logistic_mislabelled_CC)
+
+plot(1:p_cc, abs(hat_beta_KLD_logistic_CC - hat_beta_KLD_logistic_mislabelled_CC), type = "b", lwd = 3, col = "red", xlab = "$\\theta$-index", ylab = "$|\\hat{\\theta}_{LR} - \\hat{\\theta}_{ML}|$", main = "logistic vs mislabelled", ylim = c(0, 0.4))
+points(1:p_cc, abs(hat_beta_betaD_logistic_CC - hat_beta_betaD_logistic_mislabelled_CC), type = "b", lwd = 3, col = "blue")
+
+
+```
+
+#### Predictions
+
+```{r colon_cancer_KLD_betaD_stabilityl_logit_preds_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3.5, fig.width = 3.3, dev = tikzDevice::tikz()}
+
+par(mar = c(3.1, 3.3, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+## Predictions 
+
+## logistic vs probit
+boxplot(abs(p_KLD_logistic_CC - p_KLD_probit_wbeta_CC), abs(p_betaD_logistic_CC - p_betaD_probit_wbeta_CC), names = c("KLD", "$\\beta$D"), ylab = "$|p_{LR}-p_{PR}|$", main = "logistic vs probit")
+#abline(h = max(abs(p_logistic(2*Xbeta)-p_probit(Xbeta))), lwd = 3, lty = 2, col = "grey")
+abline(h = w_probit_beta_hat$objective, lwd = 3, lty = 2, col = "grey")
+
+## logistic vs t_logistic
+boxplot(abs(p_KLD_logistic_CC - p_KLD_t_logistic_wbeta_CC), abs(p_betaD_logistic_CC - p_betaD_t_logistic_wbeta_CC), names = c("KLD", "$\\beta$D"), ylab = "$|p_{LR}-p_{tLR}|$", main = "logistic vs t-logistic")
+abline(h = w_t_beta_hat$objective, lwd = 3, lty = 2, col = "grey")
+
+## logistic vs logistic- mislabelled 
+boxplot(abs(p_KLD_logistic_CC - p_KLD_logistic_mislabelled_CC), abs(p_betaD_logistic_CC - p_betaD_logistic_mislabelled_CC), names = c("KLD", "$\\beta$D"), ylab = "$|p_{LR}-p_{ML}|$", main = "logistic vs mislabelled")
+abline(h = 0.05, lwd = 3, lty = 2, col = "grey")
+
+```

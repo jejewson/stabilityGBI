@@ -1,0 +1,1069 @@
+---
+title: "Stability: Mixture Modelling"
+author: "Jack Jewson"
+date: "June 2022"
+output: html_document
+---
+
+This notebook contains the code to reproduce the experiments of Section 6.2  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
+
+## Preliminaries {.tabset}
+
+### Working directory
+
+Setting the Working Directory as the folder where these files are stored
+
+```{r wkd, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+my.dir <- "/home/usuario/Documents/Barcelona_Yr1/StabilityGeneralBayes"
+
+```
+
+### Packages
+
+Loading required packages
+
+```{r pcks, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+library(numDeriv)
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+
+library(matrixStats)
+
+library(xtable)
+library(knitr)
+
+library(RColorBrewer)
+
+library(readr)
+
+```
+
+### stan files
+
+Compiling the required stan files
+
+```{r stan, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+setwd(my.dir)
+
+#http://discourse.mc-stan.org/t/stan-recompile-to-avoid-r-from-crashing/2631
+KL_MixtureBayesnorm_NIW_stan <- stan_model(file = "stan/KL_MixtureBayesnorm_NIW.stan")
+
+beta_MixtureBayesnorm_NIW_stan <- stan_model(file = "stan/beta_MixtureBayesnorm_NIW.stan")
+
+```
+
+### MCMC settings
+
+```{r MCMC settings, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+warmup <- 1000
+iter <- warmup + 1000
+
+```
+
+
+# Shapley Galaxy Dataset {.tabset}
+
+https://astrostatistics.psu.edu/datasets/Shapley_galaxy.html
+
+From Miller \& Dunson (2018) ``The galaxy dataset of Roeder (1990) is a classic benchmark for nonparametric mixture models, but it is somewhat outdated, and rather small, with only n = 82. Drinkwater et al. (2004) provide a more recent and larger dataset of the same type, consisting of the velocities of 4215 galaxies in the Shapley supercluster, a large concentration of gravitationally-interacting galaxies; see Figure 7. The clustering tendency of galaxies continues to be a subject of interest in astronomy. However, due to the filament-like nature of the distribution of galaxies, it seems likely that any such clusters will not be Gaussian.''
+
+
+
+## Loading the data
+
+```{r Shapley_Galaxy_Cluster, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+Shapley_galaxy <- read_table2(paste0(my.dir, "/data/Shapley_galaxy.txt"))
+
+```
+
+## Plotting the Data
+
+```{r Shapley_Galaxy_Cluster_plot, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+shapley_galaxy_data <- Shapley_galaxy$V/1000
+
+hist(shapley_galaxy_data, breaks = 100, probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+hist(shapley_galaxy_data, breaks = 100, xlim = c(0, 50), xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+
+shapley_galaxy_data_trim <- shapley_galaxy_data[shapley_galaxy_data <= 50]
+n <- length(shapley_galaxy_data_trim)
+```
+
+## Prior Specification, K = 2
+
+For all $K$ we set$\nu_0 = 5$, $S_0 = 0.2$ and $\kappa = 5.68$
+
+For each $K$ we want to make sure the probability that any $omega_j < 0.05$ is very small say no greater than 0.05, i.e. that our a prior actually has K components. Under the joint Dirichlet prior the marginal distribution of each $omega_j$ is $\omega_j \sim Beta(\alpha_j, \sum_{k=1}^K \alpha_k - \alpha_j)$
+
+```{r PriorSpecification_K2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+K2 <- 2
+
+mu_0 <- rep(0, K2)
+kappa_0 <- 5.68
+nu_0 <- 5
+S_0 <- 0.2
+
+alpha_0 <- 1
+pbeta(0.05, shape1 = alpha_0, shape2 = (K2-1)*alpha_0)
+
+```
+
+## KLD-Bayes, K = 2
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+KL_MixtureBayesnorm_NIW_data_Shapley_K2 <- list(n = n, K = K2, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0)
+KL_MixtureBayesnorm_NIW_Shapley_K2 <- sampling(object = KL_MixtureBayesnorm_NIW_stan, data = KL_MixtureBayesnorm_NIW_data_Shapley_K2, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+KL_MixtureBayesnorm_NIW_Shapley_K2_params <- extract(KL_MixtureBayesnorm_NIW_Shapley_K2)
+
+```
+
+## Diag
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K2_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+legend("topright", c("KLD (K = 2)"), col = c("red"), lwd = 3, bty = "n")
+box()
+
+```
+
+## betaD-Bayes, K = 2, beta = 0.5
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K2_beta1, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta1 <- 0.5
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K2_beta1 <- list(n = n, K = K2, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta1)
+beta_MixtureBayesnorm_NIW_Shapley_K2_beta1 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K2_beta1, iter = iter, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.9, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_raw), dim = c(K2 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1)
+
+```
+
+## betaD-Bayes, K = 2, beta = 0.25
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K2_beta2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta2 <- 0.25
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K2_beta2 <- list(n = n, K = K2, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta2)
+beta_MixtureBayesnorm_NIW_Shapley_K2_beta2 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K2_beta2, iter = iter, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.9, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_raw), dim = c(K2 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2)
+
+```
+
+## Diag
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K2_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$mu)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$sigma2)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$omega_simplex)
+
+
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 2)", "betaD (K = 2, beta = 0.5)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 2)", "betaD (K = 2, beta = 0.25)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+```
+
+## Prior Specification, K = 3
+
+```{r PriorSpecification_K3, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+K3 <- 3
+
+mu_0 <- rep(0, K3)
+kappa_0 <- 5.68
+nu_0 <- 5
+S_0 <- 0.2
+
+#alpha_0 <- 1
+#pbeta(0.05, shape1 = alpha_0, shape2 = (K3-1)*alpha_0)
+
+alpha_0_set <- optimize(f = function(alpha_0){abs(pbeta(0.05, shape1 = alpha_0, shape2 = (K3-1)*alpha_0) - 0.05)}, interval = c(0, 10))
+alpha_0_set$minimum
+alpha_0_set$objective
+
+alpha_0 <- alpha_0_set$minimum
+```
+
+## KLD-Bayes, K = 3
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K3, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+KL_MixtureBayesnorm_NIW_data_Shapley_K3 <- list(n = n, K = K3, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0)
+KL_MixtureBayesnorm_NIW_Shapley_K3 <- sampling(object = KL_MixtureBayesnorm_NIW_stan, data = KL_MixtureBayesnorm_NIW_data_Shapley_K3, iter = iter, warmup = warmup, chains = 1, cores = 1
+        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+        , init = list(c1  = list("mu" = c(5, 15, 25),
+                             "sigma2" = c(1, 1, 1),
+                          "omega_raw" = array(rep(1/(K3 - 1), K3 - 1), dim = c(K3 - 1)))
+                   )
+                        )
+
+KL_MixtureBayesnorm_NIW_Shapley_K3_params <- extract(KL_MixtureBayesnorm_NIW_Shapley_K3)
+
+```
+
+## Diag
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K3_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+legend("topright", c("KLD (K = 3)"), col = c("red"), lwd = 3, bty = "n")
+box()
+
+```
+
+## betaD-Bayes, K = 3, beta = 0.5
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K3_beta1, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta1 <- 0.5
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K3_beta1 <- list(n = n, K = K3, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta1)
+beta_MixtureBayesnorm_NIW_Shapley_K3_beta1 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K3_beta1, iter = iter, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.9, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_raw), dim = c(K3 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1)
+
+
+```
+
+## betaD-Bayes, K = 3, beta = 0.25
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K3_beta2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta2 <- 0.25
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K3_beta2 <- list(n = n, K = K3, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta2)
+beta_MixtureBayesnorm_NIW_Shapley_K3_beta2 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K3_beta2, iter = iter, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.9, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_raw), dim = c(K3 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2)
+
+
+```
+
+## Diag
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K3_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex)
+
+
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 3)", "betaD (K = 3, beta = 0.5)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 3)", "betaD (K = 3, beta = 0.25)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+```
+
+## Stability, K = 2 vs K = 3
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_K2_K3_stability, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+#### KLD ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = "red", lty = 2)
+legend("topright", c("KLD (K = 2)", "KLD (K = 3)"), col = c("red", "red"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+KLD_TVD_K2_K3 <- TVD_mix1_mix2(mu1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu),
+                               sigma21 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2),
+                               w1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex),
+                               mu2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu),
+                               sigma22 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2),
+                               w2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex))
+
+KLD_TVD_K2_K3
+
+#### betaD (beta = 0.5) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 2, beta = 0.5)", "betaD (K = 3, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K2_K3_beta1 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex))
+
+betaD_TVD_K2_K3_beta1
+
+#### betaD (beta = 0.25) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 2, beta = 0.5)", "betaD (K = 3, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K2_K3_beta2 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex))
+
+betaD_TVD_K2_K3_beta2
+
+```
+
+## Prior Specification, K = 4
+
+```{r PriorSpecification_K4, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+K4 <- 4
+
+mu_0 <- rep(0, K4)
+kappa_0 <- 5.68
+nu_0 <- 5
+S_0 <- 0.2
+
+#alpha_0 <- 1
+#pbeta(0.05, shape1 = alpha_0, shape2 = (K4-1)*alpha_0)
+
+alpha_0_set <- optimize(f = function(alpha_0){abs(pbeta(0.05, shape1 = alpha_0, shape2 = (K4-1)*alpha_0) - 0.05)}, interval = c(0, 10))
+alpha_0_set$minimum
+alpha_0_set$objective
+
+alpha_0 <- alpha_0_set$minimum
+```
+
+## KLD-Bayes, K = 4
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K4, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+KL_MixtureBayesnorm_NIW_data_Shapley_K4 <- list(n = n, K = K4, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0)
+KL_MixtureBayesnorm_NIW_Shapley_K4 <- sampling(object = KL_MixtureBayesnorm_NIW_stan, data = KL_MixtureBayesnorm_NIW_data_Shapley_K4, iter = iter, warmup = warmup, chains = 1, cores = 1
+        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+        , init = list(c1  = list("mu" = c(5, 15, 20, 25),
+                             "sigma2" = c(1, 1, 1, 1),
+                          "omega_raw" = array(rep(1/(K4 - 1), K4 - 1), dim = c(K4 - 1)))
+                   )
+                        )
+
+KL_MixtureBayesnorm_NIW_Shapley_K4_params <- extract(KL_MixtureBayesnorm_NIW_Shapley_K4)
+
+```
+
+## Diag
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K4_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+legend("topright", c("KLD (K = 4)"), col = c("red"), lwd = 3, bty = "n")
+box()
+
+```
+
+## betaD-Bayes, K = 4, beta = 0.5
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K4_beta1, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta1 <- 0.5
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K4_beta1 <- list(n = n, K = K4, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta1)
+beta_MixtureBayesnorm_NIW_Shapley_K4_beta1 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K4_beta1, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, stepsize = 0.01, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_raw), dim = c(K4 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1)
+
+
+```
+
+## betaD-Bayes, K = 4, beta = 0.25
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K4_beta2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta2 <- 0.25
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K4_beta2 <- list(n = n, K = K4, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta2)
+beta_MixtureBayesnorm_NIW_Shapley_K4_beta2 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K4_beta2, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_raw), dim = c(K4 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2)
+
+
+```
+
+## Diag
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K4_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex)
+
+
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 4)", "betaD (K = 4, beta = 0.5)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 4)", "betaD (K = 4, beta = 0.25)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+```
+
+## Stability, K = 3 vs K = 4
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_K3_K4_stability, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+#### KLD ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = "red", lty = 2)
+legend("topright", c("KLD (K = 3)", "KLD (K = 4)"), col = c("red", "red"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+KLD_TVD_K3_K4 <- TVD_mix1_mix2(mu1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu),
+                               sigma21 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2),
+                               w1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex),
+                               mu2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu),
+                               sigma22 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2),
+                               w2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex))
+
+KLD_TVD_K3_K4
+
+#### betaD (beta = 0.5) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 3, beta = 0.5)", "betaD (K = 4, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K3_K4_beta1 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex))
+
+betaD_TVD_K3_K4_beta1
+
+#### betaD (beta = 0.25) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 3, beta = 0.5)", "betaD (K = 4, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K3_K4_beta2 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex))
+
+betaD_TVD_K3_K4_beta2
+
+```
+
+## Prior Specification, K = 5
+
+```{r PriorSpecification_K5, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+K5 <- 5
+
+mu_0 <- rep(0, K5)
+kappa_0 <- 5.68
+nu_0 <- 5
+S_0 <- 0.2
+
+#alpha_0 <- 1
+#pbeta(0.05, shape1 = alpha_0, shape2 = (K5-1)*alpha_0)
+
+alpha_0_set <- optimize(f = function(alpha_0){abs(pbeta(0.05, shape1 = alpha_0, shape2 = (K5-1)*alpha_0) - 0.05)}, interval = c(0, 10))
+alpha_0_set$minimum
+alpha_0_set$objective
+
+alpha_0 <- alpha_0_set$minimum
+```
+
+## KLD-Bayes, K = 5
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K5, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+KL_MixtureBayesnorm_NIW_data_Shapley_K5 <- list(n = n, K = K5, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0)
+KL_MixtureBayesnorm_NIW_Shapley_K5 <- sampling(object = KL_MixtureBayesnorm_NIW_stan, data = KL_MixtureBayesnorm_NIW_data_Shapley_K5, iter = iter, warmup = warmup, chains = 1, cores = 1
+        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+        , init = list(c1  = list("mu" = c(5, 15, 17, 20, 25),
+                             "sigma2" = rep(1, K5),
+                          "omega_raw" = array(rep(1/(K5 - 1), K5 - 1), dim = c(K5 - 1)))
+                   )
+                        )
+
+KL_MixtureBayesnorm_NIW_Shapley_K5_params <- extract(KL_MixtureBayesnorm_NIW_Shapley_K5)
+
+```
+
+## Diag
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K5_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+legend("topright", c("KLD (K = 5)"), col = c("red"), lwd = 3, bty = "n")
+box()
+
+```
+
+## betaD-Bayes, K = 5, beta = 0.5
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K5_beta1, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta1 <- 0.5
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K5_beta1 <- list(n = n, K = K5, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta1)
+beta_MixtureBayesnorm_NIW_Shapley_K5_beta1 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K5_beta1, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_raw), dim = c(K5 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1)
+
+
+```
+
+## betaD-Bayes, K = 5, beta = 0.25
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K5_beta2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta2 <- 0.25
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K5_beta2 <- list(n = n, K = K5, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta2)
+beta_MixtureBayesnorm_NIW_Shapley_K5_beta2 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K5_beta2, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_raw), dim = c(K5 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2)
+
+
+```
+
+## Diag
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K5_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex)
+
+
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 5)", "betaD (K = 5, beta = 0.5)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 5)", "betaD (K = 5, beta = 0.25)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+```
+
+## Stability, K = 4 vs K = 5
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_K4_K5_stability, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+#### KLD ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = "red", lty = 2)
+legend("topright", c("KLD (K = 4)", "KLD (K = 5)"), col = c("red", "red"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+KLD_TVD_K4_K5 <- TVD_mix1_mix2(mu1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu),
+                               sigma21 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2),
+                               w1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex),
+                               mu2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu),
+                               sigma22 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2),
+                               w2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex))
+
+KLD_TVD_K4_K5
+
+#### betaD (beta = 0.5) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 4, beta = 0.5)", "betaD (K = 5, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K4_K5_beta1 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex))
+
+betaD_TVD_K4_K5_beta1
+
+#### betaD (beta = 0.25) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 4, beta = 0.5)", "betaD (K = 5, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K4_K5_beta2 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex))
+
+betaD_TVD_K4_K5_beta2
+
+```
+
+
+## Prior Specification, K = 6
+
+```{r PriorSpecification_K6, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+K6 <- 6
+
+mu_0 <- rep(0, K6)
+kappa_0 <- 5.68
+nu_0 <- 5
+S_0 <- 0.2
+
+#alpha_0 <- 1
+#pbeta(0.05, shape1 = alpha_0, shape2 = (K6-1)*alpha_0)
+
+alpha_0_set <- optimize(f = function(alpha_0){abs(pbeta(0.05, shape1 = alpha_0, shape2 = (K6-1)*alpha_0) - 0.05)}, interval = c(0, 10))
+alpha_0_set$minimum
+alpha_0_set$objective
+
+alpha_0 <- alpha_0_set$minimum
+```
+
+## KLD-Bayes, K = 6
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K6, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+KL_MixtureBayesnorm_NIW_data_Shapley_K6 <- list(n = n, K = K6, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0)
+KL_MixtureBayesnorm_NIW_Shapley_K6 <- sampling(object = KL_MixtureBayesnorm_NIW_stan, data = KL_MixtureBayesnorm_NIW_data_Shapley_K6, iter = iter, warmup = warmup, chains = 1, cores = 1
+        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+        , init = list(c1  = list("mu" = c(5, 15, 17, 20, 25, 30),
+                             "sigma2" = rep(1, K6),
+                          "omega_raw" = array(rep(1/(K6 - 1), K6 - 1), dim = c(K6 - 1)))
+                   )
+                        )
+
+KL_MixtureBayesnorm_NIW_Shapley_K6_params <- extract(KL_MixtureBayesnorm_NIW_Shapley_K6)
+
+```
+
+## Diag
+
+```{r KL_MixtureBayesnorm_NIW_Shapley_K6_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2)
+
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+legend("topright", c("KLD (K = 6)"), col = c("red"), lwd = 3, bty = "n")
+box()
+
+```
+
+## betaD-Bayes, K = 6, beta = 0.5
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K6_beta1, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta1 <- 0.5
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K6_beta1 <- list(n = n, K = K6, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta1)
+beta_MixtureBayesnorm_NIW_Shapley_K6_beta1 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K6_beta1, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, max_treedepth = 15)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_raw), dim = c(K6 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1)
+
+
+```
+
+## betaD-Bayes, K = 6, beta = 0.25
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K6_beta2, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+
+beta2 <- 0.25
+
+beta_MixtureBayesnorm_NIW_data_Shapley_K6_beta2 <- list(n = n, K = K6, y = matrix(shapley_galaxy_data_trim, nrow = n, ncol = 1), mu_0 = mu_0, kappa = kappa_0, nu_0 = nu_0, S_0 = S_0, alpha_0 = alpha_0, w = 1, beta_p = beta2)
+beta_MixtureBayesnorm_NIW_Shapley_K6_beta2 <- sampling(object = beta_MixtureBayesnorm_NIW_stan, data = beta_MixtureBayesnorm_NIW_data_Shapley_K6_beta2, iter = iter + 2000, warmup = warmup, chains = 1, cores = 1
+      , control = list(adapt_delta = 0.95, max_treedepth = 15, stepsize = 0.01)
+      , init = list(c1  = list("mu" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu),
+                           "sigma2" = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2),
+                        "omega_raw" = array(colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_raw), dim = c(K6 - 1)))
+                   )
+)
+
+beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params <- extract(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2)
+
+
+```
+
+## Diag
+
+```{r beta_MixtureBayesnorm_NIW_Shapley_K6_diag, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$mu)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$mu)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$sigma2)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$sigma2)
+
+colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$omega_simplex)
+colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$omega_simplex)
+
+
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 6)", "betaD (K = 6, beta = 0.5)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+legend("topright", c("KLD (K = 6)", "betaD (K = 6, beta = 0.25)"), col = c("red", "blue"), lwd = 3, bty = "n")
+box()
+```
+
+## Stability, K = 5 vs K = 6
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_K5_K6_stability, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+#### KLD ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = "red")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)), lwd = 3, type = "l", col = "red", lty = 2)
+legend("topright", c("KLD (K = 5)", "KLD (K = 6)"), col = c("red", "red"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+KLD_TVD_K5_K6 <- TVD_mix1_mix2(mu1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu),
+                               sigma21 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2),
+                               w1 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex),
+                               mu2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu),
+                               sigma22 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2),
+                               w2 = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex))
+
+KLD_TVD_K5_K6
+
+#### betaD (beta = 0.5) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 5, beta = 0.5)", "betaD (K = 6, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K5_K6_beta1 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$omega_simplex))
+
+betaD_TVD_K5_K6_beta1
+
+#### betaD (beta = 0.25) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$omega_simplex)), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("betaD (K = 5, beta = 0.5)", "betaD (K = 6, beta = 0.5)"), col = c("blue", "blue"), lty = c(1, 2), lwd = 3, bty = "n")
+box()
+
+betaD_TVD_K5_K6_beta2 <- TVD_mix1_mix2(mu1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu),
+                               sigma21 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2),
+                               w1 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex),
+                               mu2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$mu),
+                               sigma22 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$sigma2),
+                               w2 = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$omega_simplex))
+
+betaD_TVD_K5_K6_beta2
+
+```
+
+
+## Full Stability Comparison
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_stability_TVD_Table, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE}
+
+TVD_table <- data.frame("Method" = c("KLD", "betaD (beta = 0.25)", "betaD (beta = 0.5)"),
+                        "K = 2 vs K = 3" = c(KLD_TVD_K2_K3, betaD_TVD_K2_K3_beta2, betaD_TVD_K2_K3_beta1),
+                        "K = 3 vs K = 4" = c(KLD_TVD_K3_K4, betaD_TVD_K3_K4_beta2, betaD_TVD_K3_K4_beta1),
+                        "K = 4 vs K = 5" = c(KLD_TVD_K4_K5, betaD_TVD_K4_K5_beta2, betaD_TVD_K4_K5_beta1),
+                        "K = 5 vs K = 6" = c(KLD_TVD_K5_K6, betaD_TVD_K5_K6_beta2, betaD_TVD_K5_K6_beta1))
+
+TVD_table <- data.frame("Method" = c("K = 2 vs K = 3", "K = 3 vs K = 4", "K = 4 vs K = 5", "K = 5 vs K = 6"),
+                        "KLD" = c(KLD_TVD_K2_K3, KLD_TVD_K3_K4, KLD_TVD_K4_K5, KLD_TVD_K5_K6),
+                        "betaD (beta = 0.25)" = c(betaD_TVD_K2_K3_beta2, betaD_TVD_K3_K4_beta2, betaD_TVD_K4_K5_beta2, betaD_TVD_K5_K6_beta2),
+                        "betaD (beta = 0.5)" = c(betaD_TVD_K2_K3_beta1, betaD_TVD_K3_K4_beta1, betaD_TVD_K4_K5_beta1, betaD_TVD_K5_K6_beta1))
+                          
+xtable(TVD_table, include.rownames = FALSE)
+
+kable(TVD_table)
+
+xtable(t(TVD_table), include.rownames = FALSE)
+
+kable(t(TVD_table))
+
+
+```
+
+```{r KL_beta_MixtureBayesnorm_NIW_Shapley_stability_hists_tikz, include=TRUE,echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 2, fig.width = 5, dev = tikzDevice::tikz()}
+
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+#par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+## here i generate these with the same wdith as othe rplots but these will be the whole page 
+par(cex.lab = 1.0, cex.axis = 1.0, cex.main = 1.0)
+
+light_offset <- 0
+cols <- brewer.pal(n = 5 + light_offset, name = "Set1")
+
+
+#### KLD ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "Shapley Galaxy Velocities - KLD")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K2_params$omega_simplex)), lwd = 3, type = "l", col = cols[1])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K3_params$omega_simplex)), lwd = 3, type = "l", col = cols[2])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K4_params$omega_simplex)), lwd = 3, type = "l", col = cols[3])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K5_params$omega_simplex)), lwd = 3, type = "l", col = cols[4])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$mu), sigma2s = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$sigma2), ws = colMeans(KL_MixtureBayesnorm_NIW_Shapley_K6_params$omega_simplex)), lwd = 3, type = "l", col = cols[5], lty = 2)
+legend("topright", c("$K = 2$", "$K = 3$", "$K = 4$", "$K = 5$", "$K = 6$"), col = cols, lty = c(rep(1, 4), 2), lwd = 3, bty = "n")
+box()
+
+
+
+#### betaD (beta = 0.5) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "$\\beta$D - $(\\beta = 1.5)$")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta1_params$omega_simplex)), lwd = 3, type = "l", col = cols[1])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta1_params$omega_simplex)), lwd = 3, type = "l", col = cols[2])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta1_params$omega_simplex)), lwd = 3, type = "l", col = cols[3])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta1_params$omega_simplex)), lwd = 3, type = "l", col = cols[4])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta1_params$omega_simplex)), lwd = 3, type = "l", col = cols[5], lty = 2)
+#legend("topright", c("betaD (K = 2, beta = 0.5)", "betaD (K = 3)", "betaD (K = 4)", "betaD (K = 5)", "betaD (K = 6)"), col = cols, lty = c(rep(1, 4), 2), lwd = 3, bty = "n")
+box()
+
+
+#### betaD (beta = 0.25) ####
+
+x_seq <- seq(0, 50, length.out = 1000) 
+hist(shapley_galaxy_data_trim, breaks = 100, xlim = c(0, 50), probability = TRUE, xlab = "Velocity (1000kms/s)", ylab = "Density", main = "$\\beta$D - $(\\beta = 1.25)$")
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K2_beta2_params$omega_simplex)), lwd = 3, type = "l", col = cols[1])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K3_beta2_params$omega_simplex)), lwd = 3, type = "l", col = cols[2])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K4_beta2_params$omega_simplex)), lwd = 3, type = "l", col = cols[3])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K5_beta2_params$omega_simplex)), lwd = 3, type = "l", col = cols[4])
+points(x_seq, dnorm_mixture(x = x_seq, mus = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$mu), sigma2s = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$sigma2), ws = colMeans(beta_MixtureBayesnorm_NIW_Shapley_K6_beta2_params$omega_simplex)), lwd = 3, type = "l", col = cols[5], lty = 2)
+#legend("topright", c("betaD (K = 2, beta = 0.25)", "betaD (K = 3)", "betaD (K = 4)", "betaD (K = 5)", "betaD (K = 6)"), col = cols, lty = c(rep(1, 4), 2), lwd = 3, bty = "n")
+box()
+
+
+```
+

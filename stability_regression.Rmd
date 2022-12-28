@@ -1,0 +1,719 @@
+---
+title: "Stability: Linear Regression"
+author: "Jack Jewson"
+date: "Dec 2022"
+output: html_document
+---
+
+This notebook contains the code to reproduce the experiments of Sections 6.1.1 and B.1.4 of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
+
+## Preliminaries {.tabset}
+
+### Working directory
+
+Setting the Working Directory as the folder where these files are stored
+
+```{r wkd, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+my.dir <- "/home/usuario/Documents/Barcelona_Yr1/StabilityGeneralBayes"
+
+
+```
+
+### Packages
+
+Loading required packages
+
+```{r pcks, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+
+library(metRology)
+
+library(numDeriv)
+
+### THESE DON'T WORK IN UPDATED R
+
+## https://bioconductor.org/packages/release/data/annotation/html/hgu133plus2.db.html
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("hgu133plus2.db")
+
+#library(hgu133plus2.db)
+
+#BiocManager::install("KEGGREST")
+
+#library(KEGGREST)
+#library(org.Hs.eg.db)
+
+
+```
+
+### stan files
+
+Compiling the required stan files
+
+```{r stan, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE}
+
+setwd(my.dir)
+
+KLBayesnorm_linearmodel_sigma2_adj_stan <- stan_model(file = "stan/KLBayesnorm_var_linearmodel_sigma2_adj.stan")
+
+KLBayest_linearmodel_stan <- stan_model(file = "stan/KLBayest_var_linearmodel.stan")
+
+betaBayesnorm_linearmodel_sigma2_adj_stan <- stan_model(file = "stan/betaBayesnorm_linearmodel_sigma2_adj.stan")
+
+betaBayest_linearmodel_stan <- stan_model(file = "stan/betaBayest_linearmodel.stan")
+
+
+
+```
+
+
+### Functions
+
+Function to evaluate the predictive density under the Gaussian and Student's-t linear model
+
+```{r linear_model_predictive, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+pred_density_linearmodel_norm <- function(y, X, beta_samp, sigma2_samp){
+  n <- length(y)
+  N <- nrow(beta_samp)
+  
+  pred <- rep(NA, n)
+  for(i in 1:n){
+    pred[i] <- mean(dnorm(y[i], X[i,]%*%t(beta_samp), sqrt(sigma2_samp)))
+  }
+  return(pred)
+}
+
+pred_density_linearmodel_t <- function(y, X, beta_samp, sigma2_samp, df){
+  n <- length(y)
+  N <- nrow(beta_samp)
+  
+  pred <- rep(NA, n)
+  for(i in 1:n){
+    pred[i] <- mean(dt.scaled(y[i], df, mean = drop(X[i,]%*%t(beta_samp)), sd = sqrt(sigma2_samp)))
+  }
+  return(pred)
+}
+
+
+```
+
+## Gaussian and Student-t TVD Neighbourhood 
+
+Constructing the TVD neighbourhood including the Gaussian and the Student's-t likelihood
+
+```{r t_normal_neighbourhood, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, dev = tikzDevice::tikz()}
+
+
+## estimating sigma^2_adj to match the quartiles
+sigma2_adj_fun <- function(sigma2_adj){
+ return(abs(qt.scaled(0.25, df = 5, 0, 1)-qnorm(0.25, 0, sqrt(sigma2_adj*1))))
+}
+
+sigma2_adj <- optimize(sigma2_adj_fun, 1, lower = 0, upper = 1000)
+sigma2_adj$minimum
+
+```
+
+## DLD data {.tabset}
+
+### Data Loading
+
+Loading the data and defining the response and set of possible predictors.
+
+```{r DLD_dataload, include=TRUE,echo=TRUE, eval=TRUE,cache=FALSE}
+#setwd(paste0(my.dir.data, "/data"))
+
+dld_data <- read.table(paste0(my.dir, "/data/dld.txt"), header = TRUE, sep = '\t')
+
+dld_y <- as.vector(scale(dld_data[,1]))
+dld_X <- cbind(scale(as.matrix(dld_data[,c(-1, -56, -57, -58)])), as.matrix(dld_data[,c(56, 57, 58)]))
+
+n_obs_dld <- length(dld_y)
+n_obs_dld
+p_dim_dld <- ncol(dld_X)
+
+```
+
+### Data Preprocessing: PCA variable selection
+
+A principal components analysis of the set of predictors for DLD. Selecting the 5 variables with the highest loading in each of the first three principal components.
+
+```{r DLD_PCA, include=TRUE,echo=TRUE, eval=TRUE,cache=FALSE}
+
+PCA_dld_X <- princomp(dld_X)
+
+PCA_selected_names <- unique(c(names(sort(abs(PCA_dld_X$loadings[,1]), decreasing = TRUE)[1:5]),
+names(sort(abs(PCA_dld_X$loadings[,2]), decreasing = TRUE)[1:5])
+, names(sort(abs(PCA_dld_X$loadings[,3]), decreasing = TRUE)[1:5])
+))
+
+index_PCA_selected <- rep(NA, 15)
+for(i in 1:15){
+  index_PCA_selected[i] <- which(colnames(dld_X) == PCA_selected_names[i])
+}
+
+index_PCA_selected <- sort(index_PCA_selected)
+
+index_PCA_selected
+
+dld_X_sparse <- cbind(rep(1, n_obs_dld), dld_X[,index_PCA_selected])
+
+p_dim_sparse_dld <- ncol(dld_X_sparse)
+
+p_dim_sparse_dld
+
+```
+
+### Prior Specification
+
+Specifying the prior hyperparameters.
+
+```{r DLD_prior_specification, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+mu_0 <- 0
+v_0 <- 5
+a_0 <- 2
+b_0 <- 0.5
+
+```
+
+
+### MCMC specifications
+
+```{r DLD_MCMC_specification, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+warmup <- 1000
+iter <- warmup + 5000
+
+```
+
+### Gaussian Model - KLD-Bayes
+
+```{r DLD_KLD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayesnorm_linearmodel_data <- list(n = n_obs_dld, p = p_dim_sparse_dld, y = as.matrix(dld_y_scaled, nrow = n_obs_dld, ncol = 1), X = dld_X_sparse, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, w = 1, sigma2_adj = sigma2_adj$minimum)
+
+KLBayesnorm_linearmodel <- sampling(object = KLBayesnorm_linearmodel_sigma2_adj_stan, data = KLBayesnorm_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+KLBayesnorm_linearmodel_params <- extract(KLBayesnorm_linearmodel)
+
+
+
+```
+
+```{r DLD_KLD_norm_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(KLBayesnorm_linearmodel_params$beta)
+mean(KLBayesnorm_linearmodel_params$sigma2)
+```
+
+### Student's-t Model - KLD-Bayes
+
+```{r DLD_KLD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayest_linearmodel_data <- list(n = n_obs_dld, p = p_dim_sparse_dld, y = as.matrix(dld_y_scaled, nrow = n_obs_dld, ncol = 1), X = dld_X_sparse, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, df = 5, w = 1)
+
+KLBayest_linearmodel <- sampling(object = KLBayest_linearmodel_stan, data = KLBayest_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+KLBayest_linearmodel_params <- extract(KLBayest_linearmodel)
+
+
+
+```
+
+```{r DLD_KLD_t_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(KLBayest_linearmodel_params$beta)
+mean(KLBayest_linearmodel_params$sigma2)
+
+sum(abs(colMeans(KLBayest_linearmodel_params$beta) - colMeans(KLBayesnorm_linearmodel_params$beta)))
+```
+
+### KLD-Bayes Comparisons
+
+
+```{r DLD_KLD_norm_vs_t_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3, fig.width = 5, dev = tikzDevice::tikz()}
+
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+x_seq <- seq(-20, 20, length.out = 2000)
+
+hist((dld_y_scaled - dld_X_sparse%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "KLD - Gaussian", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.6), xlim = c(-10, 10))
+points(x_seq, dnorm(x_seq, 0, sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "red")
+box()
+
+hist((dld_y_scaled - dld_X_sparse%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "KLD - Student's-$t$", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.6), xlim = c(-10, 10))
+points(x_seq, dt.scaled(x_seq, 5, 0, 1), lwd = 3, type = "l", lty = 1, col = "red")
+box()
+
+## Plot parameters 
+
+plot(0:(p_dim_sparse_dld - 1), colMeans(KLBayesnorm_linearmodel_params$beta), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$\\hat{\\theta}$", main = "KLD", ylim = c(-1, 3))
+points(0:(p_dim_sparse_dld - 1), colMeans(KLBayest_linearmodel_params$beta), type = "b", lwd = 3, col = "grey")
+
+plot(0:(p_dim_sparse_dld - 1), abs(colMeans(KLBayesnorm_linearmodel_params$beta) - colMeans(KLBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "KLD", ylim = c(0, 1))
+
+## box-plots of predictive densities
+
+pred_KLBayesnorm_linearmodel <- pred_density_linearmodel_norm(y = dld_y_scaled, X = dld_X_sparse, beta_samp = KLBayesnorm_linearmodel_params$beta, sigma2_samp = KLBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)
+pred_KLBayest_linearmodel <- pred_density_linearmodel_t(y = dld_y_scaled, X = dld_X_sparse, beta_samp = KLBayest_linearmodel_params$beta, sigma2_samp = KLBayest_linearmodel_params$sigma2, df = 5)
+
+boxplot(pred_KLBayesnorm_linearmodel - pred_KLBayest_linearmodel)
+
+plot((dld_y_scaled - dld_X_sparse%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), (dld_y_scaled - dld_X_sparse%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", main = "KLD")
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+
+```
+
+
+### Gaussian Model - betaD-Bayes
+
+```{r DLD_betaD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+beta <- 0.5
+
+betaD_w_norm <- 1
+
+betaBayesnorm_linearmodel_data <- list(n = n_obs_dld, p = p_dim_sparse_dld, y = as.matrix(dld_y_scaled, nrow = n_obs_dld, ncol = 1), X = dld_X_sparse, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, w = betaD_w_norm, beta_p = beta, sigma2_adj = sigma2_adj$minimum)
+
+betaBayesnorm_linearmodel <- sampling(object = betaBayesnorm_linearmodel_sigma2_adj_stan, data = betaBayesnorm_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+betaBayesnorm_linearmodel_params <- extract(betaBayesnorm_linearmodel)
+
+
+
+```
+
+```{r DLD_betaD_norm_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(betaBayesnorm_linearmodel_params$beta)
+mean(betaBayesnorm_linearmodel_params$sigma2)
+```
+
+### Student's-t Model - betaD-Bayes
+
+```{r DLD_betaD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+beta <- 0.5
+
+betaD_w_t <- 1
+
+betaBayest_linearmodel_data <- list(n = n_obs_dld, p = p_dim_sparse_dld, y = as.matrix(dld_y_scaled, nrow = n_obs_dld, ncol = 1), X = dld_X_sparse, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, df = 5, w = betaD_w_t, beta_p = beta)
+
+betaBayest_linearmodel <- sampling(object = betaBayest_linearmodel_stan, data = betaBayest_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+betaBayest_linearmodel_params <- extract(betaBayest_linearmodel)
+
+```
+
+```{r DLD_betaD_t_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(betaBayest_linearmodel_params$beta)
+mean(betaBayest_linearmodel_params$sigma2)
+
+sum(abs(colMeans(betaBayest_linearmodel_params$beta) - colMeans(betaBayesnorm_linearmodel_params$beta)))
+```
+
+### betaD-Bayes comparisons
+
+
+```{r DLD_betaD_norm_vs_t_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3, fig.width = 5, dev = tikzDevice::tikz()}
+
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+x_seq <- seq(-20, 20, length.out = 2000)
+
+hist((dld_y_scaled - dld_X_sparse%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "betaD - Gaussian", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.6), xlim = c(-10, 10))
+points(x_seq, dnorm(x_seq, 0, sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "blue")
+box()
+
+hist((dld_y_scaled - dld_X_sparse%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "betaD - Student's-$t$", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.6), xlim = c(-10, 10))
+points(x_seq, dt.scaled(x_seq, 5, 0, 1), lwd = 3, type = "l", lty = 1, col = "blue")
+box()
+
+## Plot parameters 
+
+plot(0:(p_dim_sparse_dld - 1), colMeans(betaBayesnorm_linearmodel_params$beta), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$\\hat{\\theta}$", main = "$\\beta$D", ylim = c(-1, 3))
+points(0:(p_dim_sparse_dld - 1), colMeans(betaBayest_linearmodel_params$beta), type = "b", lwd = 3, col = "grey")
+
+plot(0:(p_dim_sparse_dld - 1), abs(colMeans(betaBayesnorm_linearmodel_params$beta) - colMeans(betaBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "$\\beta$D", ylim = c(0, 1))
+
+plot(0:(p_dim_sparse_dld - 1), abs(colMeans(KLBayesnorm_linearmodel_params$beta) - colMeans(KLBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "red", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "", ylim = c(0, 1))
+points(0:(p_dim_sparse_dld - 1), abs(colMeans(betaBayesnorm_linearmodel_params$beta) - colMeans(betaBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "blue")
+legend("topleft", c("KLD", "$\\beta$D"), lty = c(1, 1), lwd = c(3, 3), col = c("red", "blue"), bty = "n", cex = 1.2)
+
+## box-plots of predictive densities
+
+pred_betaBayesnorm_linearmodel <- pred_density_linearmodel_norm(y = dld_y_scaled, X = dld_X_sparse, beta_samp = betaBayesnorm_linearmodel_params$beta, sigma2_samp = betaBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)
+pred_betaBayest_linearmodel <- pred_density_linearmodel_t(y = dld_y_scaled, X = dld_X_sparse, beta_samp = betaBayest_linearmodel_params$beta, sigma2_samp = betaBayest_linearmodel_params$sigma2, df = 5)
+
+boxplot(cbind(pred_KLBayesnorm_linearmodel - pred_KLBayest_linearmodel, pred_betaBayesnorm_linearmodel - pred_betaBayest_linearmodel), names = c("KLD", "$\\beta$D"), ylab = "Predictive Density Difference")
+
+
+plot((dld_y_scaled - dld_X_sparse%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), (dld_y_scaled - dld_X_sparse%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", main = "$\\beta$D")
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+
+plot((dld_y_scaled - dld_X_sparse%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), (dld_y_scaled - dld_X_sparse%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", col = "red", pch = 19)
+points((dld_y_scaled - dld_X_sparse%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), (dld_y_scaled - dld_X_sparse%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), col = "blue", pch = 4)
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+legend("topleft", c("KLD", "$\\beta$D"), col = c("red", "blue"), lwd = 3, bty = "n")
+
+plot(x_seq, dnorm(x_seq, 0, sqrt(mean(KLBayesnorm_linearmodel_params$sigma2))*sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "red", ylab = "Density", xlab = "$(y - X\\hat{\\theta})$", ylim = c(0, 0.8), xlim = c(-3, 3))
+points(x_seq, dt.scaled(x_seq, 5, 0, sqrt(mean(KLBayest_linearmodel_params$sigma2))), lwd = 3, type = "l", col = "red", lty =2)
+points(x_seq, dnorm(x_seq, 0, sqrt(mean(betaBayesnorm_linearmodel_params$sigma2))*sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "blue")
+points(x_seq, dt.scaled(x_seq, 5, 0, sqrt(mean(betaBayest_linearmodel_params$sigma2))), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("KLD - Gaussian", "KLD - Student's-$t$", "$\\beta$D - Gaussian", "$\\beta$D - Student's-$t$"), col= c("red", "red", "blue", "blue"), lty = c(1, 2, 1, 2), lwd = 3, bty = "n")
+
+## QQ-normal
+
+qqnorm((dld_y_scaled - dld_X_sparse%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)), main = "DLD - Normal Q-Q Plot")
+abline(a = 0, b = 1, lwd = 3, col = "grey", lty = 2)
+
+```
+
+
+## TGFB172 data {.tabset}
+
+### Data Loading
+
+Loading the data and defining the response and set of possible predictors.
+
+```{r TGFB172_dataload, include=TRUE,echo=TRUE, eval=TRUE, cache=TRUE}
+#setwd(paste(my.dir, "/data", sep = ""))
+
+tgfb10000_data <- read.table(paste0(my.dir, "/data/tgfb_10000.txt"), header = TRUE, sep='\t')
+
+
+tgfb10000_y <- as.vector(tgfb10000_data[,1])
+tgfb10000_X <- cbind(1,as.matrix(tgfb10000_data[,-1]))
+
+n_obs_tgfb10000 <- length(tgfb10000_y)
+p_dim_tgfb10000 <- ncol(tgfb10000_X)
+
+n_obs_tgfb10000
+```
+
+### Data preprocessing
+
+Identifying the genes available in the set of predictors that appear in the ‘TGF-B1 pathway’.
+
+#### Gene symbols and KEGG gene ids from the dataset
+
+Identifying the gene symbols corresponding to each variable in the data and transforming these into the KEGG number.
+
+```{r TGFB172_gene_symbols, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+#gene_symbol10000 <- rep(NA, p_dim_tgfb10000 - 1) ## -1 because of the intercept 
+#for(i in 1:(p_dim_tgfb10000 - 1)){
+#  gene_symbol10000[i] <- mget(sub("X", "", colnames(tgfb10000_data)[1 + i]), hgu133plus2SYMBOL)[[1]] #gene symbol
+#}
+
+#NA_IDs <- which(is.na(gene_symbol10000) == TRUE)
+#sym_data10000 = gene_symbol10000[-NA_IDs]    
+#EG_IDs_data = mget(sym_data10000, revmap(org.Hs.egSYMBOL), ifnotfound = NA)
+
+#EG_ICs_data <- unlist(EG_IDs_data)
+
+```
+
+#### KEGG gene pathways
+
+Identifying the genes that appear in the ‘TGF-B1 pathway’.
+
+```{r KEGG_gene_pathways, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+#TGFB_query <- keggGet(c("hsa:7040")) # https://www.genome.jp/dbget-bin/www_bget?hsa:7040+hsa:7042+hsa:7043
+
+#TGFB_pathway_KEGGNumbers <- rep(NA, length(TGFB_query[[1]]$PATHWAY))
+#for(i in 1:length(TGFB_query[[1]]$PATHWAY)){
+#  TGFB_pathway_KEGGNumbers[i] <- sub("hsa0", "", names(TGFB_query[[1]]$PATHWAY)[i])
+#}
+
+```
+
+#### Gene symbol to KEGG gene ids
+
+Intersecting the ‘TGF-B1 pathway’ with the available set of predictors.
+
+```{r Gene_symbol_to_KEGG_gene_pathways, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+#pathway_data <- intersect(TGFB_pathway_KEGGNumbers, EG_ICs_data)
+
+#ID10000_pathway <- rep(NA, length(pathway_data))
+#for(i in 1:length(pathway_data)){
+#  ID10000_pathway[i] <- which(EG_ICs_data == pathway_data[i])
+#}
+
+#ID10000_pathway <- sort(ID10000_pathway)
+
+#ID10000_pathway <- c(1553, 2368, 3701, 6813, 7222, 8838, 9013)
+## I think the above packages conflict with stan so I just hard code
+## I took this from selecting_loss_jointHyvarinen_LaplaceApprox_TGFB.html
+
+#tgfb10000_X_pathway <- tgfb10000_X[, - c(1 + NA_IDs)][,c(1, 1 + ID10000_pathway)]
+
+## so we have the intercept and
+ID10000_pathway_colnames <- c("X227899_at", "X211302_s_at", "X214594_x_at", "X213996_at", "X215239_x_at", "X202659_at", "X207009_at")
+ID10000_pathway <- rep(NA, length(ID10000_pathway_colnames))
+for(j in 1:length(ID10000_pathway_colnames)){
+  ID10000_pathway[j] <- which(colnames(tgfb10000_X) == ID10000_pathway_colnames[j])
+}
+ID10000_pathway
+
+tgfb10000_X_pathway <- tgfb10000_X[,c(1, ID10000_pathway)]
+
+
+p_dim_sparse_tgfb1000 <- ncol(tgfb10000_X_pathway)
+
+p_dim_sparse_tgfb1000
+
+#detach("package:hgu133plus2.db",  unload=TRUE)
+#detach("package:KEGGREST",  unload=TRUE)
+#detach("package:org.Hs.eg.db",  unload=TRUE)
+```
+
+### Prior Specification
+
+Specifying the prior hyperparameters.
+
+```{r tgfb172_prior_specification, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+mu_0 <- 0
+v_0 <- 5
+a_0 <- 2
+b_0 <- 0.5
+
+```
+
+
+### MCMC specifications
+
+```{r tgfb172_MCMC_specification, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+warmup <- 1000
+iter <- warmup + 5000
+
+```
+
+### Gaussian Model - KLD-Bayes
+
+```{r tgfb172_KLD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayesnorm_linearmodel_data <- list(n = n_obs_tgfb10000, p = p_dim_sparse_tgfb1000, y = as.matrix(tgfb10000_y, nrow = n_obs_tgfb10000, ncol = 1), X = tgfb10000_X_pathway, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, w = 1, sigma2_adj = sigma2_adj$minimum)
+
+KLBayesnorm_linearmodel <- sampling(object = KLBayesnorm_linearmodel_sigma2_adj_stan, data = KLBayesnorm_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+KLBayesnorm_linearmodel_params <- extract(KLBayesnorm_linearmodel)
+
+
+
+```
+
+```{r tgfb172_KLD_norm_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(KLBayesnorm_linearmodel_params$beta)
+mean(KLBayesnorm_linearmodel_params$sigma2)
+```
+
+### Student's-t Model - KLD-Bayes
+
+```{r tgfb172_KLD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+KLBayest_linearmodel_data <- list(n = n_obs_tgfb10000, p = p_dim_sparse_tgfb1000, y = as.matrix(tgfb10000_y, nrow = n_obs_tgfb10000, ncol = 1), X = tgfb10000_X_pathway, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, df = 5, w = 1)
+
+KLBayest_linearmodel <- sampling(object = KLBayest_linearmodel_stan, data = KLBayest_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+KLBayest_linearmodel_params <- extract(KLBayest_linearmodel)
+
+
+
+```
+
+```{r tgfb172_KLD_t_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(KLBayest_linearmodel_params$beta)
+mean(KLBayest_linearmodel_params$sigma2)
+
+sum(abs(colMeans(KLBayest_linearmodel_params$beta) - colMeans(KLBayesnorm_linearmodel_params$beta)))
+```
+
+### KLD-Bayes Comparisons
+
+```{r tgfb172_KLD_norm_vs_t_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3, fig.width = 5, dev = tikzDevice::tikz()}
+
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+
+x_seq <- seq(-20, 20, length.out = 2000)
+
+hist((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "KLD - Gaussian", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.45), xlim = c(-5, 5))
+points(x_seq, dnorm(x_seq, 0, sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "red")
+box()
+
+hist((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "KLD - Student's-$t$", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.45), xlim = c(-5, 5))
+points(x_seq, dt.scaled(x_seq, 5, 0, 1), lwd = 3, type = "l", lty = 1, col = "red")
+box()
+
+## Plot parameters 
+
+plot(0:(p_dim_sparse_tgfb1000 - 1), colMeans(KLBayesnorm_linearmodel_params$beta), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$\\hat{\\theta}$", main = "KLD", ylim = c(-0.5, 0.5))
+points(0:(p_dim_sparse_tgfb1000 - 1), colMeans(KLBayest_linearmodel_params$beta), type = "b", lwd = 3, col = "grey")
+
+plot(0:(p_dim_sparse_tgfb1000 - 1), abs(colMeans(KLBayesnorm_linearmodel_params$beta) - colMeans(KLBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "KLD", ylim = c(0, 0.1))
+
+## box-plots of predictive densities
+
+pred_KLBayesnorm_linearmodel <- pred_density_linearmodel_norm(y = tgfb10000_y, X = tgfb10000_X_pathway, beta_samp = KLBayesnorm_linearmodel_params$beta, sigma2_samp = KLBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)
+pred_KLBayest_linearmodel <- pred_density_linearmodel_t(y = tgfb10000_y, X = tgfb10000_X_pathway, beta_samp = KLBayest_linearmodel_params$beta, sigma2_samp = KLBayest_linearmodel_params$sigma2, df = 5)
+
+boxplot(pred_KLBayesnorm_linearmodel - pred_KLBayest_linearmodel)
+
+plot((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), (tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", main = "KLD")
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+
+```
+
+### Gaussian Model - betaD-Bayes 
+
+```{r tgfb172_betaD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+beta <- 0.5
+
+betaD_w_norm <- 1
+
+betaBayesnorm_linearmodel_data <- list(n = n_obs_tgfb10000, p = p_dim_sparse_tgfb1000, y = as.matrix(tgfb10000_y, nrow = n_obs_tgfb10000, ncol = 1), X = tgfb10000_X_pathway, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, w = betaD_w_norm, beta_p = beta, sigma2_adj = sigma2_adj$minimum)
+
+betaBayesnorm_linearmodel <- sampling(object = betaBayesnorm_linearmodel_sigma2_adj_stan, data = betaBayesnorm_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+betaBayesnorm_linearmodel_params <- extract(betaBayesnorm_linearmodel)
+
+
+
+```
+
+```{r tgfb172_betaD_norm_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(betaBayesnorm_linearmodel_params$beta)
+mean(betaBayesnorm_linearmodel_params$sigma2)
+```
+
+### Student's-t Model - betaD-Bayes
+
+```{r tgfb172_betaD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+beta <- 0.5
+
+betaD_w_t <- 1
+
+betaBayest_linearmodel_data <- list(n = n_obs_tgfb10000, p = p_dim_sparse_tgfb1000, y = as.matrix(tgfb10000_y, nrow = n_obs_tgfb10000, ncol = 1), X = tgfb10000_X_pathway, mu_beta = mu_0, beta_s = v_0, sig_p1 = a_0, sig_p2 = b_0, df = 5, w = betaD_w_t, beta_p = beta)
+
+betaBayest_linearmodel <- sampling(object = betaBayest_linearmodel_stan, data = betaBayest_linearmodel_data, iter = iter, warmup = warmup, chains = 1, cores = 1
+                        #, control = list(adapt_delta = 0.999, stepsize = 0.01)
+                        )
+
+betaBayest_linearmodel_params <- extract(betaBayest_linearmodel)
+
+
+
+```
+
+```{r tgfb172_betaD_t_diag, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+colMeans(betaBayest_linearmodel_params$beta)
+mean(betaBayest_linearmodel_params$sigma2)
+
+sum(abs(colMeans(betaBayest_linearmodel_params$beta) - colMeans(betaBayesnorm_linearmodel_params$beta)))
+```
+
+### betaD-Bayes Comparisons
+
+
+```{r tgfb172_betaD_norm_vs_t_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = FALSE, fig.height = 3, fig.width = 5, dev = tikzDevice::tikz()}
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+x_seq <- seq(-20, 20, length.out = 2000)
+
+hist((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "betaD - Gaussian", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.45), xlim = c(-5, 5))
+points(x_seq, dnorm(x_seq, 0, sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "blue")
+box()
+
+hist((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), breaks = 50, probability = TRUE, main = "betaD - Student's-$t$", xlab = "$(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylim = c(0, 0.45), xlim = c(-5, 5))
+points(x_seq, dt.scaled(x_seq, 5, 0, 1), lwd = 3, type = "l", lty = 1, col = "blue")
+box()
+
+## Plot parameters 
+
+plot(0:(p_dim_sparse_tgfb1000 - 1), colMeans(betaBayesnorm_linearmodel_params$beta), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$\\hat{\\theta}$", main = "$\\beta$D", ylim = c(-0.5, 0.5))
+points(0:(p_dim_sparse_tgfb1000 - 1), colMeans(betaBayest_linearmodel_params$beta), type = "b", lwd = 3, col = "grey")
+
+plot(0:(p_dim_sparse_tgfb1000 - 1), abs(colMeans(betaBayesnorm_linearmodel_params$beta) - colMeans(betaBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "black", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "$\\beta$D", ylim = c(0, 0.1))
+
+plot(0:(p_dim_sparse_tgfb1000 - 1), abs(colMeans(KLBayesnorm_linearmodel_params$beta) - colMeans(KLBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "red", xlab = "Parameter index", ylab = "$|\\hat{\\theta}_{norm} - \\hat{\\theta}_{t}|$", main = "", ylim = c(0, 0.1))
+points(0:(p_dim_sparse_tgfb1000 - 1), abs(colMeans(betaBayesnorm_linearmodel_params$beta) - colMeans(betaBayest_linearmodel_params$beta)), type = "b", lwd = 3, col = "blue")
+legend("topleft", c("KLD", "$\\beta$D"), lty = c(1, 1), lwd = c(3, 3), col = c("red", "blue"), bty = "n", cex = 1.2)
+
+## box-plots of predictive densities
+
+pred_betaBayesnorm_linearmodel <- pred_density_linearmodel_norm(y = tgfb10000_y, X = tgfb10000_X_pathway, beta_samp = betaBayesnorm_linearmodel_params$beta, sigma2_samp = betaBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)
+pred_betaBayest_linearmodel <- pred_density_linearmodel_t(y = tgfb10000_y, X = tgfb10000_X_pathway, beta_samp = betaBayest_linearmodel_params$beta, sigma2_samp = betaBayesnorm_linearmodel_params$sigma2, df = 5)
+
+boxplot(cbind(pred_KLBayesnorm_linearmodel - pred_KLBayest_linearmodel, pred_betaBayesnorm_linearmodel - pred_betaBayest_linearmodel), names = c("KLD", "$\\beta$D"))
+
+
+plot((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), (tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", main = "$\\beta$D")
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+
+plot((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2)), (tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayest_linearmodel_params$beta)) / sqrt(mean(KLBayest_linearmodel_params$sigma2)), xlab = "Gaussian - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", ylab = "Student's-$t$ - $(y - X\\hat{\\theta})/\\hat{\\sigma}$", col = "red", pch = 19)
+points((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayesnorm_linearmodel_params$beta)) / sqrt(mean(betaBayesnorm_linearmodel_params$sigma2)), (tgfb10000_y - tgfb10000_X_pathway%*%colMeans(betaBayest_linearmodel_params$beta)) / sqrt(mean(betaBayest_linearmodel_params$sigma2)), col = "blue", pch = 4)
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
+legend("topleft", c("KLD", "$\\beta$D"), col = c("red", "blue"), lwd = 3, bty = "n")
+
+plot(x_seq, dnorm(x_seq, 0, sqrt(mean(KLBayesnorm_linearmodel_params$sigma2))*sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "red", ylab = "Density", xlab = "$(y - X\\hat{\\theta})$", ylim = c(0, 0.5), xlim = c(-4, 4))
+points(x_seq, dt.scaled(x_seq, 5, 0, sqrt(mean(KLBayest_linearmodel_params$sigma2))), lwd = 3, type = "l", col = "red", lty =2)
+points(x_seq, dnorm(x_seq, 0, sqrt(mean(betaBayesnorm_linearmodel_params$sigma2))*sqrt(sigma2_adj$minimum)), lwd = 3, type = "l", lty = 1, col = "blue")
+points(x_seq, dt.scaled(x_seq, 5, 0, sqrt(mean(betaBayest_linearmodel_params$sigma2))), lwd = 3, type = "l", col = "blue", lty = 2)
+legend("topright", c("KLD - Gaussian", "KLD - Student's-$t$", "$\\beta$D - Gaussian", "$\\beta$D - Student's-$t$"), col= c("red", "red", "blue", "blue"), lty = c(1, 2, 1, 2), lwd = 3, bty = "n")
+
+## QQ-normal
+
+qqnorm((tgfb10000_y - tgfb10000_X_pathway%*%colMeans(KLBayesnorm_linearmodel_params$beta)) / sqrt(mean(KLBayesnorm_linearmodel_params$sigma2*sigma2_adj$minimum)), main = "TGF$\\beta$ - Normal Q-Q Plot")
+abline(a = 0, b = 1, lwd = 3, col = "grey", lty = 2)
+
+```
+
