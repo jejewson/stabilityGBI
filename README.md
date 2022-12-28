@@ -7,7 +7,7 @@ The repository contains the following .Rmd files:
 + `stability_regression.Rmd` which contains the code to reproduce the experiements of Sections 6.1.1 and B.1.4 of the paper 
 + `stability_mixture_modelling.Rmd` which contains the code to reproduce the experiements of Section 6.2 of the paper
 + `stability_binaryClassification.Rmd` which contains the code to reproduce the experiements of Section 6.3 of the paper
-```
+
 The *data* folder contain the DLD, TGF-$\beta$, Shapley Galaxy and Pima Indians datasets used in the paper. The *stan* folder contains the necessary .stan files to sample from the KLD-Bayes and $\beta$D-Bayes posteriors.
 
 ### Contact Information and Acknowledgments
