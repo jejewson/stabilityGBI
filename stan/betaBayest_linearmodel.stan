@@ -1,3 +1,4 @@
+// betaD-Bayesian Student's-t Linear Model
 
 data {
    

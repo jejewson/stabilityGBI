@@ -1,8 +1,9 @@
+// betaD-Bayesian Student's-t Likelihood Model
 
 data {
    // Inputs for the sampler: data and prior hyperparameters
    int<lower=0> n;
-   matrix[n,1] y;// this matrix is only to make inputting data easier!
+   matrix[n,1] y;
    real mu_m;
    real<lower=0> mu_s;
    real<lower=0> sig_p1;

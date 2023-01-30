@@ -1,3 +1,4 @@
+// betaD-Bayesian Linear Model (multiplying the scale parameter sigma2 by a constant sigma2_adj)
 
 data {
    

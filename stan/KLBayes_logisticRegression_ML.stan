@@ -1,3 +1,4 @@
+// KLD-Bayesian Logistic Regression
 
 data {
    
@@ -14,7 +15,7 @@ data {
 parameters 
 {
    
-vector[p] beta;
+  vector[p] beta;
 
 }
 
@@ -29,7 +30,7 @@ transformed parameters
 
 model {
   
-beta ~ normal(mu_beta,sqrt(beta_s));
+  beta ~ normal(mu_beta,sqrt(beta_s));
 
 
   for(i in 1:n){

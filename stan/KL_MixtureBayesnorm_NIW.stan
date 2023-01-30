@@ -1,12 +1,10 @@
-// Here I implment the Mixture of gaussians using the local NormalInverseWishart prior 
-// used in David's bfnormmix function
-
-// Note this is univariate so IW(Sigma_j; nu0, S0) is inverse-gamma distribution. 
+// KLD-Bayesian Finite Mixture of Gaussians Model - using NormalInverseWishart priors 
+// This is univariate so IW(Sigma_j; nu0, S0) is inverse-gamma distribution. 
 // With alpha0 = nu0/2 and \beta0 = S0/2 
 
 functions {
    
-     // Creates one simplex
+  // Creates one simplex
   vector simplex_create(vector theta_raw, int m){
     vector[m+1] theta_simplex;
     real stick_len = 1;
@@ -21,7 +19,7 @@ functions {
     return theta_simplex;
   }
   
-  // To correctly specify we also need the log absolute Jacobian determinant of the simplex_create
+  // log absolute Jacobian determinant of the simplex_create
   real simplex_create_lj(vector theta_raw, int m){
     real lj = 0;
     real stick_len = 1;
@@ -35,6 +33,7 @@ functions {
     return lj;
   }
    
+   // Finite Gaussian Mixture Model Likelihood 
    real norm_mix_lpdf (real y, int K, vector mu, vector sigma2, vector omega){
       real log_lik = negative_infinity();
       for(k in 1:K){
@@ -53,17 +52,16 @@ data {
    int<lower=1> K;
    matrix[n,1] y;
    vector[K] mu_0;
-   real<lower=0> kappa; // g in mombf
+   real<lower=0> kappa;
    real<lower=0> nu_0;
    real<lower=0> S_0;
-   real<lower=0> alpha_0; // q.niw in mombf
+   real<lower=0> alpha_0;
 
 }
 
 parameters 
 {
    
-   //vector[K] mu;
    ordered[K] mu;
    vector<lower=0>[K] sigma2;
    vector[K - 1] omega_raw; // Each K simplex only has K - 1 degrees of freedom
@@ -73,7 +71,7 @@ parameters
 model {
    
    vector[K] omega_simplex;
-   // First we turn our raw omega's into simplexes
+   // Turn raw omegas into simplexes
    omega_simplex = simplex_create(omega_raw, K - 1);
 
 

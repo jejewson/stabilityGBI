@@ -1,3 +1,5 @@
+// betaD-Bayesian Logistic Regression (multiplying the beta parameters by a constant w_beta)
+
 
 data {
    
@@ -31,7 +33,7 @@ transformed parameters
 
 model {
    real p_logistic;
-   beta ~ normal(mu_beta,sqrt(beta_s));
+   target += normal_lpdf(beta | mu_beta,sqrt(beta_s));
 
    for(i in 1:n){
      p_logistic = (exp(0.5*y[i,1]*lin_pred[i,1])/

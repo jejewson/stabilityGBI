@@ -1,3 +1,5 @@
+// KLD-Bayesian Probit Regression (multiplying the beta parameters by a constant w_beta)
+
 
 data {
    
@@ -15,7 +17,7 @@ data {
 parameters 
 {
    
-vector[p] beta;
+  vector[p] beta;
 
 }
 
@@ -31,7 +33,7 @@ transformed parameters
 model {
    real log_p_probit;
    
-   beta ~ normal(mu_beta,sqrt(beta_s));
+   target += normal_lpdf(beta | mu_beta,sqrt(beta_s));
 
 
    for(i in 1:n){

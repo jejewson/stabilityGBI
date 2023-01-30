@@ -1,19 +1,20 @@
+// KLD-Bayesian t-Logistic Regression (multiplying the beta parameters by a constant w_beta)
+
 
 functions {
    real exp_t(real x, real t){
-      //if(t<=0){return(NA)} this will be dealt with by the inputs of the stan data
+      
       real out;
       if(t==1){ 
          out = exp(x);
       }
       else{
-         out = fmax(0,(1+(1-t)*x)^(1/(1-t)));// This will only work in serial
+         out = fmax(0,(1+(1-t)*x)^(1/(1-t)));
       }
       return out;
    }
    
    real log_t(real x, real t){
-      //if(t<=0){return(NA)}
       real out;
       if(t==1){ 
          out = log(x);
@@ -63,7 +64,7 @@ data {
 parameters 
 {
    
-vector[p] beta;
+  vector[p] beta;
 
 }
 
@@ -78,7 +79,7 @@ transformed parameters
 
 model {
   
-beta ~ normal(mu_beta,sqrt(beta_s));
+  target += normal_lpdf(beta | mu_beta,sqrt(beta_s));
 
 
   for(i in 1:n){

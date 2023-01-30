@@ -1,3 +1,5 @@
+// betaD-Bayesian Mislabelled Logistic Regression (multiplying the beta parameters by a constant w_beta)
+
 
 data {
    
@@ -33,8 +35,8 @@ transformed parameters
 
 model {
    real p_logistic;
-   beta ~ normal(mu_beta,sqrt(beta_s));
-   eta ~ beta(1, 1);
+   target += normal_lpdf(beta | mu_beta,sqrt(beta_s));
+   target += beta_lpdf(eta | 1, 1);
 
    for(i in 1:n){
      p_logistic = (1-eta[(y[i,1]+1)/2 + 1])*exp(0.5*y[i,1]*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])) + 

@@ -1,3 +1,4 @@
+// betaD-Bayesian Logistic Regression
 
 data {
    

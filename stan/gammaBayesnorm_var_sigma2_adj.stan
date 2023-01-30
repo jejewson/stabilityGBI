@@ -1,3 +1,4 @@
+// gammD-Bayesian Likelihood Model (multiplying the scale parameter sigma2 by a constant sigma2_adj)
 
 data {
    // Inputs for the sampler: data and prior hyperparameters

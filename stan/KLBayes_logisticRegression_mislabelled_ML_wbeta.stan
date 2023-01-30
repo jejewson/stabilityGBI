@@ -1,3 +1,5 @@
+// KLD-Bayesian Mislabelled Logistic Regression (multiplying the beta parameters by a constant w_beta)
+
 
 data {
    
@@ -32,18 +34,10 @@ transformed parameters
 
 model {
   
-   beta ~ normal(mu_beta,sqrt(beta_s));
-   eta ~ beta(1, 1);
+   target += normal_lpdf(beta | mu_beta,sqrt(beta_s));
+   target += beta_lpdf(eta | 1, 1);
 
   for(i in 1:n){
-     /*if(y[i, 1] == 1){
-        target += log((1-eta[2])*exp(0.5*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])) + 
-                         eta[1]*exp(-0.5*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])));
-     }
-     if(y[i, 1] == -1){
-        target += log((1-eta[1])*exp(-0.5*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])) + 
-                         eta[2]*exp(0.5*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])));
-     }*/
      
       target += log((1-eta[(y[i,1]+1)/2 + 1])*exp(0.5*y[i,1]*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])) + 
                        eta[(-y[i,1]+1)/2 + 1]*exp(-0.5*y[i,1]*lin_pred[i,1])/(exp(0.5*lin_pred[i,1])+exp(-0.5*lin_pred[i,1])));
