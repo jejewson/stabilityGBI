@@ -1,6 +1,6 @@
 # stabilityGBI
 
-stabilityGBI contains the *R* scripts and *stan* software to reproduce the experiments from the paper "On the Stability of General Bayesian Inference" J. Jewson, J.Q.Smith and C. Holmes (2023). The article and supplementary material can be found at **.
+stabilityGBI contains the *R* scripts and *stan* software to reproduce the experiments from the paper "On the Stability of General Bayesian Inference" J. Jewson, J. Q. Smith and C. Holmes (2023). The article and supplementary material can be found at **.
 
 The repository contains the following .Rmd files:
 + `stability_Gaussian_Student.Rmd` which contains the code to reproduce Figures 1, 2, 3, B.1, B.2 and B.3 of the paper 
