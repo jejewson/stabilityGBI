@@ -284,7 +284,7 @@ abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
 
 ```{r DLD_betaD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-beta <- 0.5
+beta <- 0.34 #- Learned using Yonekura & Sugasawa
 
 betaD_w_norm <- 1
 
@@ -310,7 +310,7 @@ mean(betaBayesnorm_linearmodel_params$sigma2)
 
 ```{r DLD_betaD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-beta <- 0.5
+beta <- 0.34 #- Learned using Yonekura & Sugasawa
 
 betaD_w_t <- 1
 
@@ -607,7 +607,7 @@ abline(a = 0, b = 1, lwd = 3, lty = 2, col = "grey")
 
 ```{r tgfb172_betaD_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-beta <- 0.5
+beta <- 0.03 #- Learned using Yonekura & Sugasawa
 
 betaD_w_norm <- 1
 
@@ -633,7 +633,7 @@ mean(betaBayesnorm_linearmodel_params$sigma2)
 
 ```{r tgfb172_betaD_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-beta <- 0.5
+beta <- 0.03 #- Learned using Yonekura & Sugasawa
 
 betaD_w_t <- 1
 

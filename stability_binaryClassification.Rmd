@@ -5,7 +5,7 @@ date: "Dec 2022"
 output: html_document
 ---
 
-This notebook contains the code to reproduce the experiments of Section 6.3  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
+This notebook contains the code to reproduce the experiments of Section 6.2  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
 
 ## Preamble {.tabset}
 
@@ -399,12 +399,21 @@ p_KLD_logistic_mislabelled_CC <- logistic_mislabelled_predictive(KLBayes_logisti
 
 ```
 
+### Setting beta
+
+```{r beta_set, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+beta_set <- 2 - 1
+(3*(beta_set + 1) - 2)/((beta_set + 1)*beta_set)
+
+```
+
 
 ### betaD-Bayes - Logistic Regression
 
 ```{r colon_cancer_betaD_logistic, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-betaBayes_logisticRegression_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = 0.5)
+betaBayes_logisticRegression_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = beta_set)
 betaBayes_logisticRegression <- sampling(object = betaBayes_logisticRegression_stan, data = betaBayes_logisticRegression_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
 betaBayes_logisticRegression_params <- extract(betaBayes_logisticRegression)
 
@@ -418,7 +427,7 @@ p_betaD_logistic_CC <- logistic_predictive(betaBayes_logisticRegression_params$b
 
 ```{r colon_cancer_betaD_t_logistic_wbeta2, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-betaBayes_t_logisticRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, t = 1.25,  beta_p = 0.5, w_beta = w_t_beta_hat$minimum)
+betaBayes_t_logisticRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, t = 1.25,  beta_p = beta_set, w_beta = w_t_beta_hat$minimum)
 betaBayes_t_logisticRegression_wbeta <- sampling(object = betaBayes_t_logisticRegression_wbeta_stan, data = betaBayes_t_logisticRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1, refresh = 0)
 betaBayes_t_logisticRegression_wbeta_params <- extract(betaBayes_t_logisticRegression_wbeta)
 
@@ -432,7 +441,7 @@ p_betaD_t_logistic_wbeta_CC <- t_logistic_predictive(w_t_beta_hat$minimum*betaBa
 
 ```{r colon_cancer_betaD_probit_wbeta, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-betaBayes_probitRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = 0.5, w_beta = w_probit_beta_hat$minimum)
+betaBayes_probitRegression_wbeta_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, w = 1, beta_p = beta_set, w_beta = w_probit_beta_hat$minimum)
 betaBayes_probitRegression_wbeta <- sampling(object = betaBayes_probitRegression_wbeta_stan, data = betaBayes_probitRegression_wbeta_data, warmup = warmup, iter = iterations, chains = 1, cores = 1, refresh = 0)
  betaBayes_probitRegression_wbeta_params <- extract(betaBayes_probitRegression_wbeta)
 
@@ -446,7 +455,7 @@ p_betaD_probit_wbeta_CC <- probit_predictive(w_probit_beta_hat$minimum*betaBayes
 
 ```{r colon_cancer_betaD_logistic_mislabelled, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
 
-betaBayes_logisticRegression_mislabelled_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, eta_bound = c(0, 0.05), w = 1, beta_p = 0.5)
+betaBayes_logisticRegression_mislabelled_data <- list(n = n_cc, p = p_cc, y = matrix(colon_cancer_Y, nrow = n_cc, ncol = 1), X = colon_cancer_X_std, mu_beta = mu_0, beta_s = v_0, eta_bound = c(0, 0.05), w = 1, beta_p = beta_set)
 betaBayes_logisticRegression_mislabelled <- sampling(object = betaBayes_logisticRegression_mislabelled_stan, data = betaBayes_logisticRegression_mislabelled_data, warmup = warmup, iter = iterations, chains = 1, cores = 1)
 betaBayes_logisticRegression_mislabelled_params <- extract(betaBayes_logisticRegression_mislabelled)
 

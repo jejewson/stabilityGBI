@@ -346,7 +346,7 @@ energy_distance(KLBayesnorm_params$y_predict, KLBayest_params$y_predict)
 
 
 ```{r eps_cont_beta_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 N <- 100000
 
@@ -364,7 +364,7 @@ betaBayesnorm_params <- extract(betaBayesnorm)
 ### Student-t Model - betaD-Bayes
 
 ```{r eps_cont_beta_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 N <- 100000
 
@@ -436,7 +436,7 @@ energy_distance(betaBayesnorm_params$y_predict, betaBayest_params$y_predict)
 ### Gaussian Model - gammaD-Bayes
 
 ```{r eps_cont_gamma_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-gamma <- 0.5
+gamma <- 0.22 #- Learned using Yonekura & Sugasawa for the betaD
 
 N <- 100000
 
@@ -454,7 +454,7 @@ gammaBayesnorm_params <- extract(gammaBayesnorm)
 ### Student-t Model - gammaD-Bayes
 
 ```{r eps_cont_gamma_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-gamma <- 0.5
+gamma <- 0.22 #- Learned using Yonekura & Sugasawa for the betaD
 
 N <- 100000
 
@@ -633,6 +633,148 @@ for(j in 1:B){
 
 ```
 
+## A uncotaminated case
+
+These are to demonstrate the results of Section 4
+
+```{r epsilon_contamination, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, dev = tikzDevice::tikz()}
+
+mu_c <- 5
+sig_c <- 3
+mu <- 0
+sig <- 1
+eps <- 0.1
+
+dg1 <- function(x){
+  return(dnorm(x, mu, sig))
+}
+
+dg2 <- function(x){
+  return((1-eps)*dnorm(x, mu, sig) + eps*dnorm(x, mu_c, sig_c))
+}
+  
+
+```
+
+```{r epsilon_contamination_tikz, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, fig.height = 3, fig.width = 5, dev = "tikz"}
+
+par(mar = c(3.1, 3.3, 1.5, 1.1)) # bottom, left, top, right
+#par(mar = c(5.1, 4.1, 4.1, 2.1)) # Default
+#par(mgp = c(3, 1, 0)) # Default - location of xlab and ylab, tick-mark labels, tick marks.
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+x_seq <- seq(-5, 10, length.out = 1000)
+plot(x_seq, abs(dg1(x_seq) - dg2(x_seq)), type = "l", xlab = "$y$", ylab = "$|g_1(y) - g_2(y)|$", lwd = 3)
+
+x_seq <- seq(-5, 10, length.out = 1000)
+plot(x_seq, abs((dg1(x_seq) - dg2(x_seq))*dnorm(x_seq, 0, 1, log = TRUE)), type = "l", xlab = "$y$", ylab = "$|(g_1(y) - g_2(y))\\log f(y)|$", lwd = 3)
+
+
+```
+
+
+
+
+```{r norm_data_sim, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+n <- 1000
+set.seed(3)
+mu <- 0
+sig <- 1
+
+data_norm <- rnorm(n, mu, sig)
+
+
+mu_0 <- 0
+kappa_0 <- 1/10
+a_0 <- 0.01
+b_0 <- 0.01
+
+
+
+
+```
+
+
+```{r norm_KL_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+
+N <- 100000
+
+
+KLBayesnorm_data <- list(n = n, y = matrix(data_norm, nrow = n, ncol = 1), mu_m = mu_0, mu_s = 1/kappa_0, sig_p1 = a_0, sig_p2 = b_0, w = 1, sigma2_adj = sigma2_adj$minimum)
+KLBayesnorm <- sampling(object = KLBayesnorm_sigma2_adj_stan, data = KLBayesnorm_data, iter = N+5000, warmup = 5000, chains = 1, cores = 1, control = list(adapt_delta = 0.999, stepsize = 0.01))
+KLBayesnorm_params <- extract(KLBayesnorm)
+
+
+
+```
+
+
+Plot predictives, parameter posterior, and maybe also the posterior for the variance of the data, this is quite tangible 
+
+Remember the energy distance is $D_E(g, f): = \int (G(x)-F(x))^2dx$ which is conveniently equivalent to $2\mathbb{E}_{X\sim G}\mathbb{E}_{Y\sim F}\left|X-Y\right|-\mathbb{E}_{X\sim G}\mathbb{E}_{X^{'}\sim G}\left|X-X^{'}\right|-\mathbb{E}_{Y\sim F}\mathbb{E}_{Y\sim F^{'}}\left|Y-Y^{'}\right|$
+
+
+```{r norm_KL_norm_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, dev = tikzDevice::tikz()}
+
+mean(KLBayesnorm_params$sigma2)*out_optim$minimum
+mean(KLBayest_params$sigma2)*5/(5-2)
+
+par(mar = c(5.1, 4.5, 4.1, 2.1), mgp = c(3, 1, 0), las = 0)
+
+x <- seq(-5, 15, length.out = 1000)
+hist_data1 <- hist(data_norm, breaks = seq(-5, 17, by = 0.2), plot = FALSE)## need to factor in the length of the vector and the number of breaks.
+plot(0, 0, type = "n", ylab = "Density", main = expression(paste("KLD")), xlab = "$y$", ylim = c(0, 0.45), xlim = c(-4, 4), cex.lab = 2, cex.axis = 2, cex.main = 2)
+#hist_data1$counts <- hist_data1$counts/(n/2)# this guy is made to be equal to 5 as the lengths of each of our bars is 0.2
+hist_data1$counts <- hist_data1$counts/(n/5)
+plot(hist_data1, add = TRUE, col = "grey")
+x <- seq(-10, 15, length.out = 1000)
+lines(density(KLBayesnorm_params$y_predict), lwd = 3, col = "red")
+legend(3, 0.45, c(expression(paste("N(0, 1)")), "Gaussian"), lty = c(1, 1), lwd = c(3, 3), col = c("grey", "red"), bty = "n", cex = 1.5)
+box(which = "plot")
+
+```
+
+```{r norm_beta_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
+beta <- 0.22 #- Learned using Yonekura & Sugasawa for the betaD
+
+N <- 100000
+
+betaD_w_norm <- weight_calib(data_norm, loss = function(data, theta){beta_loss_norm_sigma2_adj(data, theta[1], theta[2], sigma2_adj = sigma2_adj$minimum, beta)}, theta_0 = c(mean(data_norm), var(data_norm)))
+
+
+betaBayesnorm_data <- list(n = n, y = matrix(data_norm, nrow = n, ncol = 1), mu_m = mu_0, mu_s = 1/kappa_0, sig_p1 = a_0, sig_p2 = b_0, w = betaD_w_norm, sigma2_adj = sigma2_adj$minimum, beta = beta)
+betaBayesnorm <- sampling(object = betaBayesnorm_sigma2_adj_stan, data = betaBayesnorm_data, iter = N+5000, warmup = 5000, chains = 1, cores = 1, control = list(adapt_delta = 0.95))
+betaBayesnorm_params <- extract(betaBayesnorm)
+
+
+
+```
+
+
+```{r norm_beta_norm_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE, dev = tikzDevice::tikz()}
+
+mean(betaBayesnorm_params$sigma2)*out_optim$minimum
+mean(betaBayest_params$sigma2)*5/(5-2)
+
+par(mar = c(5.1, 4.5, 4.1, 2.1), mgp = c(3, 1, 0), las = 0)
+
+x <- seq(-5, 15, length.out = 1000)
+hist_data1 <- hist(data_norm, breaks = seq(-5, 17, by = 0.2), plot = FALSE)## need to factor in the length of the vector and the number of breaks.
+plot(0, 0, type = "n", ylab = "Density", main = expression(paste("KLD")), xlab = "expression(y)", ylim = c(0, 0.45), xlim = c(-4, 4), cex.lab = 2, cex.axis = 2, cex.main = 2)
+#hist_data1$counts <- hist_data1$counts/(n/2)# this guy is made to be equal to 5 as the lengths of each of our bars is 0.2
+hist_data1$counts <- hist_data1$counts/(n/5)
+plot(hist_data1, add = TRUE, col = "grey")
+x <- seq(-10, 15, length.out = 1000)
+lines(density(KLBayesnorm_params$y_predict), lwd = 3, col = "red")
+lines(density(betaBayesnorm_params$y_predict), lwd = 3, col = "blue")
+legend(-4, 0.45, c(expression(paste("N(0, 1)")), "KLD-Bayes", "betaD-Bayes"), lty = c(1, 1, 1), lwd = c(3, 3, 3), col = c("grey", "red", "blue"), bty = "n", cex = 1.5)
+box(which = "plot")
+
+
+
+```
+
 
 ## Influence Functions {.tabset}
 
@@ -685,7 +827,7 @@ grad_beta_loss_norm <- function(y, mu, sigma2, beta){
 y <- 1.3 
 mu <- 0.7
 sigma2 <- 1.7
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 grad_beta_loss_norm(y, mu, sigma2, beta)
 #grad(function(theta){beta_loss_norm(y, theta[1], theta[2], beta)}, c(mu, sigma2))
@@ -705,7 +847,7 @@ y <- 1.3
 mu <- 0.7
 sigma2 <- 1.7
 df <- 5
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 grad_beta_loss_t(y, mu, sigma2, df, beta)
 #grad(function(theta){beta_loss_t(y, theta[1], theta[2], df, beta)}, c(mu, sigma2))
@@ -739,7 +881,7 @@ KLBayest$par
 ### Gaussian Model - betaD-Bayes - MAP estimates
 
 ```{r eps_cont_beta_norm, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 
 betaBayesnorm_data <- list(n = n, y = matrix(data_eps_cont, nrow = n, ncol = 1), mu_m = mu_0, mu_s = 1/kappa_0, sig_p1 = a_0, sig_p2 = b_0, w = betaD_w_norm, sigma2_adj = sigma2_adj$minimum, beta = beta)
@@ -751,7 +893,7 @@ betaBayesnorm$par
 ### Student-t Model - betaD-Bayes - MAP estimates
 
 ```{r eps_cont_beta_t, include = TRUE, echo = TRUE, eval = TRUE, cache = TRUE}
-beta <- 0.5
+beta <- 0.22 #- Learned using Yonekura & Sugasawa
 
 betaBayest_data <- list(n = n, y = matrix(data_eps_cont, nrow = n, ncol = 1), mu_m = mu_0, mu_s = 1/kappa_0, sig_p1 = a_0, sig_p2 = b_0, df = 5, w = betaD_w_t, beta = beta)
 betaBayest <- optimizing(object = betaBayest_stan, data = betaBayest_data)

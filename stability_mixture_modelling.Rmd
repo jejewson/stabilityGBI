@@ -5,7 +5,7 @@ date: "June 2022"
 output: html_document
 ---
 
-This notebook contains the code to reproduce the experiments of Section 6.2  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
+This notebook contains the code to reproduce the experiments of Section 6.3  of ''On the Stability of General Bayesian Inference'' Jewson, Smith and Holmes (2023) 
 
 ## Preliminaries {.tabset}
 
